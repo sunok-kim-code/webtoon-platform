@@ -24,6 +24,7 @@ import {
   type GeminiPanelSuggestion,
   type GeminiCharacterAnalysis,
   type GeminiAutoTagResult,
+  type PanelType,
 } from "@/services/geminiService";
 import { ReferenceResolver, buildFallbackPrompt } from "@/services/referenceResolver";
 import {
@@ -212,6 +213,23 @@ function analyzeSceneLocally(sceneText: string): LocalAnalysis {
   const panels: GeminiPanelSuggestion[] = [];
   let panelIdx = 0;
 
+  // 씬 타입 판별 헬퍼
+  const classifyScene = (sceneText: string, chars: string[]): PanelType => {
+    const t = sceneText.trim();
+    // 캐릭터가 없고 짧으면 narration
+    if (chars.length === 0 && t.length < 80) return "narration";
+    // 대괄호/괄호로 시작하거나 "~는/이/가 생각하다" 형식 → narration
+    if (/^[\[(「『]/.test(t)) return "narration";
+    // 대화 태그만 있고 50자 미만 → dialogue
+    if (/^[가-힣]{2,4}\s*[:：]/.test(t) && t.length < 60) return "dialogue";
+    // 장소 전환 설명 (씬 헤더 텍스트) → skip
+    if (/^(씬|scene|int\.|ext\.)\s/i.test(t) && chars.length === 0) return "skip";
+    // 캐릭터 없이 순수 설명 텍스트만 → narration
+    if (chars.length === 0) return "narration";
+    // 기본: visual
+    return "visual";
+  };
+
   for (const scene of scenes) {
     if (scene.trim().length < 3) continue;
 
@@ -219,8 +237,9 @@ function analyzeSceneLocally(sceneText: string): LocalAnalysis {
     const isComplex = multiActionPatterns.filter(p => p.test(scene)).length >= 2 && scene.length > 30;
     const panelChars = allNames.filter(n => scene.includes(n));
     const chars = panelChars.length > 0 ? panelChars : allNames.slice(0, 2);
+    const panel_type = classifyScene(scene, panelChars);
 
-    if (isComplex) {
+    if (isComplex && panel_type !== "narration" && panel_type !== "skip") {
       // 복잡한 장면 → 2개 패널로 분리 (앞부분/뒷부분)
       const midPoint = scene.indexOf(",", Math.floor(scene.length / 3));
       const splitAt = midPoint > 0 ? midPoint + 1 : Math.floor(scene.length / 2);
@@ -234,8 +253,9 @@ function analyzeSceneLocally(sceneText: string): LocalAnalysis {
         cameraAngle: cameraAngles[panelIdx % cameraAngles.length],
         emotion: primaryEmotion,
         composition: "",
-        aiPrompt: `webtoon style, ${part1}. high quality, detailed, korean webtoon art style`,
+        aiPrompt: `webtoon panel. ${part1}.`,
         notes: "자동 분리된 패널 (앞부분)",
+        panel_type,
       });
       if (part2.length > 5) {
         panels.push({
@@ -245,8 +265,9 @@ function analyzeSceneLocally(sceneText: string): LocalAnalysis {
           cameraAngle: cameraAngles[panelIdx % cameraAngles.length],
           emotion: primaryEmotion,
           composition: "",
-          aiPrompt: `webtoon style, ${part2}. high quality, detailed, korean webtoon art style`,
+          aiPrompt: `webtoon panel. ${part2}.`,
           notes: "자동 분리된 패널 (뒷부분)",
+          panel_type,
         });
       }
     } else {
@@ -258,8 +279,9 @@ function analyzeSceneLocally(sceneText: string): LocalAnalysis {
         cameraAngle: cameraAngles[panelIdx % cameraAngles.length],
         emotion: primaryEmotion,
         composition: "",
-        aiPrompt: `webtoon style, ${scene}. high quality, detailed, korean webtoon art style`,
+        aiPrompt: `webtoon panel. ${scene}.`,
         notes: "",
+        panel_type,
       });
     }
   }
@@ -840,44 +862,44 @@ export function PipelinePage() {
       const latestOutfits = useReferenceStore.getState().outfits;
       const prompts: Record<number, string> = {};
       result.panels.forEach((panel, idx) => {
-        const charSnippets = panel.characters
+        // 캐릭터 토큰: 이름 + 감정 + 행동만 — 외형/의상 설명은 레퍼런스 이미지가 담당
+        const charTokens = panel.characters
           .map(name => {
             const c = result.characters.find(ch => ch.name === name);
-            const existing = latestChars.find(ec => ec.name === name) || existingChars.find(ec => ec.name === name);
-            const snippet = c?.promptSnippet || existing?.defaultPromptSnippet || "";
             const emotion = c ? (EMOTION_LABELS[c.emotion] || c.emotion) : "";
-            // 의상 프롬프트 결합 — OutfitEntry 기반
-            let outfitDesc = "";
-            if (c?.outfit && c.outfit !== "default") {
-              outfitDesc = c.outfit;
-            } else if (existing?.currentOutfitId) {
-              const activeOutfit = latestOutfits.find(o => o.id === existing.currentOutfitId);
-              if (activeOutfit) outfitDesc = activeOutfit.description || activeOutfit.label;
-            }
-            let parts = snippet ? `${snippet}` : "";
-            if (outfitDesc) parts += (parts ? ", " : "") + `wearing ${outfitDesc}`;
-            if (emotion) parts += (parts ? ", " : "") + emotion;
-            return parts
-              ? `[Character: ${name} — ${parts}]`
-              : name;
+            const action = (c as any)?.action && (c as any).action !== "standing"
+              ? ACTION_LABELS[(c as any).action] || (c as any).action
+              : "";
+            const tags = [emotion, action].filter(Boolean).join(", ");
+            return tags ? `${name}(${tags})` : name;
           })
-          .join("\n");
+          .join(", ");
 
         // 패널별 장소 결정: panel.location → 대표 장소 fallback
         const panelLocName = panel.location || result.location.name;
         const panelLoc = (result as any).locations?.find((l: any) => l.name === panelLocName) || result.location;
-        const locSnippet = panelLoc.promptSnippet
-          || existingLocs.find(l => l.name === panelLocName)?.defaultPromptSnippet
-          || "";
-        const locLine = locSnippet
-          ? `[Setting: ${panelLocName} — ${locSnippet}, ${panelLoc.timeOfDay}, ${panelLoc.mood}]`
-          : `[Setting: ${panelLocName}]`;
+        const timeLabel = TIME_LABELS[panelLoc.timeOfDay] || panelLoc.timeOfDay || "";
+        const moodLabel = MOOD_LABELS[panelLoc.mood] || panelLoc.mood || "";
 
-        if (panel.aiPrompt) {
-          prompts[idx] = `${panel.aiPrompt}\n\n${charSnippets}\n${locLine}`;
-        } else {
-          prompts[idx] = `webtoon style, ${panel.description}\n\n${charSnippets}\n${locLine}\nCamera: ${panel.cameraAngle}\n\nhigh quality, detailed, korean webtoon art style`;
-        }
+        // 의상 레퍼런스 ID 목록 (텍스트 참조 — 실제 이미지는 referenceImageUrls로 전달)
+        const outfitRefs = panel.characters
+          .map(name => panel.characterOutfits?.[name])
+          .filter(Boolean)
+          .map(id => `ref:outfit/${id}`)
+          .join(", ");
+        const locRef = `ref:location/${panelLocName.replace(/\s/g, "_")}`;
+
+        // 프롬프트: 씬 행동 + 캐릭터(이름+감정) + 장소(시간/분위기) + 카메라
+        // 외형/의상 텍스트 설명 없음 — referenceImageUrls 의 이미지가 그 역할을 함
+        prompts[idx] = [
+          `webtoon panel.`,
+          panel.description,
+          charTokens ? `Characters: ${charTokens}.` : "",
+          `Setting: ${panelLocName}${timeLabel ? ", " + timeLabel : ""}${moodLabel ? ", " + moodLabel : ""}.`,
+          `Camera: ${panel.cameraAngle}.`,
+          panel.composition ? `Composition: ${panel.composition}.` : "",
+          outfitRefs ? `[${outfitRefs}, ${locRef}]` : `[${locRef}]`,
+        ].filter(Boolean).join(" ");
       });
       setPanelPrompts(prompts);
       setCurrentStep("step2_storyboard");
@@ -1095,20 +1117,9 @@ export function PipelinePage() {
         currentPanel: idx,
       });
 
-      // 의상 프롬프트 보강 — 캐릭터별 의상 상세 설명 추가
-      const outfitEnhancements: string[] = [];
-      for (const charName of panel.characters) {
-        const char = store.characters.find(c => c.name === charName);
-        if (char) {
-          const outfitSnippet = currentResolver.resolveOutfitPrompt(char as Character, panelOutfit);
-          if (outfitSnippet) {
-            outfitEnhancements.push(`[${charName} outfit: ${outfitSnippet}]`);
-          }
-        }
-      }
-      if (outfitEnhancements.length > 0 && !prompt.includes("[outfit:")) {
-        prompt += `\n\n${outfitEnhancements.join("\n")}`;
-      }
+      // 의상 텍스트 프롬프트 보강 생략:
+      // 캐릭터+의상 레퍼런스 이미지(referenceImageUrls)가 외형을 담당하므로
+      // 텍스트에 의상 설명을 중복 기재하면 AI가 혼동할 수 있음.
 
       if (resolved.length > 0) {
         const refLabels = resolved.map(r => r.label).join(", ");
@@ -1247,6 +1258,9 @@ export function PipelinePage() {
     }
     setIsGeneratingAll(true);
     for (let i = 0; i < editingPanels.length; i++) {
+      // narration/skip 패널은 이미지 생성 제외
+      const pType = editingPanels[i].panel_type ?? "visual";
+      if (pType === "narration" || pType === "skip") continue;
       if (generatedImages[i]) continue;
       await generatePanelImage(i);
     }
@@ -1702,12 +1716,32 @@ export function PipelinePage() {
               {editingPanels.map((panel, idx) => {
                 const hasImage = !!generatedImages[idx];
                 const isGen = generatingIndex === idx;
+                const pType = panel.panel_type ?? "visual";
+                const isNonVisual = pType === "narration" || pType === "skip";
+                const pTypeBadge: Record<string, { label: string; color: string; bg: string }> = {
+                  visual:    { label: "🎨 시각", color: "#1D4ED8", bg: "#EFF6FF" },
+                  dialogue:  { label: "💬 대화", color: "#4338CA", bg: "#F5F3FF" },
+                  narration: { label: "📖 서술", color: "#92400E", bg: "#FEF3C7" },
+                  skip:      { label: "⏭ 건너뜀", color: "#6B7280", bg: "#F3F4F6" },
+                };
+                const badge = pTypeBadge[pType];
 
                 return (
-                  <div key={idx} style={S.panelCard}>
+                  <div key={idx} style={{ ...S.panelCard, opacity: isNonVisual ? 0.6 : 1, borderColor: isNonVisual ? "#E5E7EB" : undefined }}>
                     <div style={S.panelHeader}>
                       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                         <span style={S.panelBadge}>Panel {idx + 1}</span>
+                        {/* 씬 타입 배지 */}
+                        <span style={{ fontSize: "10px", fontWeight: 700, color: badge.color, background: badge.bg, borderRadius: 4, padding: "2px 6px" }}>
+                          {badge.label}
+                        </span>
+                        <button
+                          onClick={() => updatePanel(idx, { panel_type: isNonVisual ? "visual" : "skip" })}
+                          style={{ fontSize: "10px", padding: "2px 6px", borderRadius: 4, border: "1px solid #D1D5DB", background: "#fff", cursor: "pointer", color: "#6B7280" }}
+                          title={isNonVisual ? "이미지 생성 대상으로 전환" : "이미지 생성 제외"}
+                        >
+                          {isNonVisual ? "생성 포함" : "생성 제외"}
+                        </button>
                         {panel.composition && <span style={S.compositionHint}>{panel.composition}</span>}
                         {hasImage && <span style={S.statusDone}>이미지 완료</span>}
                         {isGen && <span style={S.statusGenerating}>생성 중...</span>}

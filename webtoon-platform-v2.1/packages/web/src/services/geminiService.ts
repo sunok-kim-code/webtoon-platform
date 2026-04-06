@@ -46,6 +46,15 @@ export interface GeminiLocationAnalysis {
   promptSnippet: string;           // 장소 프롬프트 스니펫
 }
 
+/**
+ * panel_type: 패널 이미지 생성 여부를 결정하는 씬 분류
+ *   "visual"    - 캐릭터 행동/시각적 변화 → 이미지 생성 대상
+ *   "dialogue"  - 대화 위주 → 이미지 생성 대상 (말풍선 패널)
+ *   "narration" - 서술/내레이션 → 텍스트 박스만, 이미지 생성 제외 가능
+ *   "skip"      - 전환/맥락 설명 → 패널 생성 불필요
+ */
+export type PanelType = "visual" | "dialogue" | "narration" | "skip";
+
 export interface GeminiPanelSuggestion {
   panelNumber: number;
   description: string;
@@ -58,6 +67,7 @@ export interface GeminiPanelSuggestion {
   composition: string;             // 구도 설명
   aiPrompt: string;                // 완성된 AI 이미지 생성 프롬프트
   notes: string;
+  panel_type?: PanelType;          // 씬 분류 (없으면 "visual" 로 간주)
 }
 
 export interface GeminiAutoTagResult {
@@ -569,7 +579,8 @@ function mapClaudeResultToGemini(
     outfitNormalizedId: c.outfit.normalized_id,
     action: c.pose || "standing",
     angle: "front",
-    promptSnippet: `${c.appearance_core}, ${c.outfit.description}${c.outfit.accessories?.length ? ", " + c.outfit.accessories.join(", ") : ""}`,
+    // promptSnippet은 외형 설명 없음 — 레퍼런스 이미지가 외형을 담당
+    promptSnippet: c.name,
     accessories: c.outfit.accessories?.join(", ") || "none",
   }));
 
@@ -592,14 +603,21 @@ function mapClaudeResultToGemini(
     // 첫 패널은 wide shot, 나머지는 medium shot 기본
     const cameraAngle = i === 0 ? "wide shot" : "medium shot";
 
-    // aiPrompt 자동 생성
-    const charSnippets = (lineChars.length > 0 ? lineChars : allCharNames)
+    // 씬 타입 결정: 캐릭터 없으면 narration, 있으면 visual
+    const hasChars = lineChars.length > 0 || allCharNames.length > 0;
+    const isDialogueOnly = /["'"]\s*[가-힣]|[가-힣]\s*[:：]/.test(line);
+    const panel_type: PanelType = !hasChars ? "narration"
+      : isDialogueOnly && line.length < 60 ? "dialogue"
+      : "visual";
+
+    // aiPrompt: 캐릭터 이름 + 감정 + 행동만. 외형/의상은 레퍼런스 이미지가 담당.
+    const charTokens = (lineChars.length > 0 ? lineChars : allCharNames)
       .map(n => {
         const c = claude.characters.find(ch => ch.name === n);
-        return c ? `${c.appearance_core}, ${c.outfit.description}` : n;
+        return c ? `${n}(${c.expression || "neutral"}, ${c.pose || "standing"})` : n;
       })
-      .join("; ");
-    const aiPrompt = `webtoon style, ${cameraAngle}, ${locationName} background, ${charSnippets}, ${claude.time_of_day || "afternoon"}, high quality, korean webtoon art style`;
+      .join(", ");
+    const aiPrompt = `webtoon panel, ${cameraAngle}. ${locationName}. ${charTokens}. ${claude.time_of_day || "afternoon"} lighting.`;
 
     return {
       panelNumber: i + 1,
@@ -613,6 +631,7 @@ function mapClaudeResultToGemini(
       composition: line,
       aiPrompt,
       notes: "",
+      panel_type,
     };
   });
 
