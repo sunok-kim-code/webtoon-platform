@@ -1,0 +1,16 @@
+{
+  "projectId": "prj_oPjRJ87eZMyQ8LwIc5ObyWIjHKSh",
+  "orgId": "team_Pth8LiiUi2HpB84viOp5ZDF6",
+  "projectName": "webtoon-platform-web",
+  "settings": {
+    "createdAt": 1775123900406,
+    "framework": "nextjs",
+    "devCommand": null,
+    "installCommand": "npm install --legacy-peer-deps",
+    "buildCommand": null,
+    "outputDirectory": null,
+    "rootDirectory": "packages/web",
+    "directoryListing": false,
+    "nodeVersion": "24.x"
+  }
+}

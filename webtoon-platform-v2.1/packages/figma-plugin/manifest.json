@@ -1,0 +1,15 @@
+{
+  "name": "Webtoon Studio",
+  "id": "webtoon-studio-plugin",
+  "api": "1.0.0",
+  "main": "dist/plugin/controller.js",
+  "ui": "dist/ui/index.html",
+  "editorType": ["figma"],
+  "networkAccess": {
+    "allowedDomains": [
+      "*.firebaseio.com",
+      "*.googleapis.com",
+      "firebasestorage.googleapis.com"
+    ]
+  }
+}

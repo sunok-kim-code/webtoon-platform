@@ -1,0 +1,8 @@
+{
+  "projectId": "prj_oPjRJ87eZMyQ8LwIc5ObyWIjHKSh",
+  "orgId": "team_Pth8LiiUi2HpB84viOp5ZDF6",
+  "settings": {
+    "framework": "vite",
+    "outputDirectory": "packages/web/dist"
+  }
+}

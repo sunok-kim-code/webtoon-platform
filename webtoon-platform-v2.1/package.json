@@ -1,0 +1,28 @@
+{
+  "name": "webtoon-platform",
+  "version": "2.1.0",
+  "private": true,
+  "description": "Webtoon Production Platform v2.1 — Web Platform + Figma Plugin",
+  "scripts": {
+    "dev": "pnpm --filter @webtoon/web dev",
+    "build": "pnpm -r build",
+    "build:web": "pnpm --filter @webtoon/web build",
+    "build:plugin": "pnpm --filter @webtoon/figma-plugin build",
+    "typecheck": "pnpm -r typecheck",
+    "clean": "pnpm -r exec rm -rf dist node_modules",
+    "deploy": "bash deploy.sh"
+  },
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=8"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "protobufjs"
+    ]
+  }
+}

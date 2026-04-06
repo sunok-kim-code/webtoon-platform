@@ -1,0 +1,6 @@
+{
+  "installCommand": "pnpm install",
+  "buildCommand": "cd packages/web && npx vite build",
+  "outputDirectory": "packages/web/dist",
+  "framework": "vite"
+}

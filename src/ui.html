@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    font-size: 12px;
+    color: #e0e0e0;
+    background: #1a1a2e;
+    padding: 12px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .header { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid #2a2a40; }
+  .header h1 { font-size: 14px; font-weight: 600; background: linear-gradient(135deg, #6c5ce7, #4fc3f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #666; transition: background 0.3s; }
+  .status-dot.connected { background: #00e676; }
+  .status-dot.syncing { background: #ffc107; animation: pulse 1s infinite; }
+  .status-dot.error { background: #ff5252; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .section { background: #2a2a40; border-radius: 8px; padding: 12px; }
+  .section-title { font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+  .field { margin-bottom: 8px; }
+  .field label { display: block; font-size: 11px; color: #999; margin-bottom: 4px; }
+  .field input, .field textarea { width: 100%; padding: 6px 8px; background: #1a1a2e; border: 1px solid #3a3a55; border-radius: 4px; color: #e0e0e0; font-size: 11px; outline: none; font-family: 'SF Mono', monospace; }
+  .field input:focus, .field textarea:focus { border-color: #4fc3f7; }
+  .btn { width: 100%; padding: 8px 12px; border: none; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+  .btn-primary { background: linear-gradient(135deg, #6c5ce7, #4fc3f7); color: white; }
+  .btn-primary:hover { opacity: 0.9; }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-secondary { background: #3a3a55; color: #ccc; margin-top: 6px; }
+  .btn-secondary:hover { background: #4a4a65; }
+  .progress-bar { height: 4px; background: #3a3a55; border-radius: 2px; overflow: hidden; margin-top: 8px; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, #6c5ce7, #4fc3f7); border-radius: 2px; transition: width 0.3s; width: 0%; }
+  .progress-label { font-size: 10px; color: #888; margin-top: 4px; }
+  .log { flex: 1; overflow-y: auto; font-family: 'SF Mono', monospace; font-size: 10px; padding: 8px; background: #111122; border-radius: 6px; line-height: 1.6; }
+  .log-entry { padding: 1px 0; }
+  .log-entry.ok { color: #00e676; }
+  .log-entry.err { color: #ff5252; }
+  .log-entry.info { color: #4fc3f7; }
+  .log-entry.warn { color: #ffc107; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="status-dot" id="statusDot"></div>
+  <h1>Webtoon Bubble Sync</h1>
+  <span style="font-size:10px;color:#888;margin-left:auto;">Firestore 모드</span>
+</div>
+
+<!-- Firebase 설정 -->
+<div class="section" id="configSection">
+  <div class="section-title">Firebase 연결</div>
+  <div class="field">
+    <label>Firebase Config (JSON)</label>
+    <textarea id="fbConfig" rows="4" placeholder='{"apiKey":"...","projectId":"...","authDomain":"..."}'></textarea>
+  </div>
+  <div class="field">
+    <label>프로젝트 ID (Firestore 문서 ID)</label>
+    <input type="text" id="projectId" placeholder="webtoon_project_abc123">
+  </div>
+  <button class="btn btn-primary" id="connectBtn" onclick="toggleConnection()">연결</button>
+</div>
+
+<!-- 동기화 상태 -->
+<div class="section hidden" id="syncSection">
+  <div class="section-title">동기화 상태</div>
+  <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+    <span id="syncStatus">대기 중</span>
+    <span id="pageCount">-</span>
+  </div>
+  <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+  <div class="progress-label" id="progressLabel"></div>
+  <button class="btn btn-secondary" onclick="sendHeartbeat()">Heartbeat 전송</button>
+</div>
+
+<div class="section-title">동기화 로그</div>
+<div class="log" id="logArea"></div>
+
+<!-- Firebase SDK (compat v9 — 웹앱과 동일) -->
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
+<script>
+  let db = null;
+  let currentProjectId = null;
+  let isConnected = false;
+  let unsubQueue = null;
+  let heartbeatInterval = null;
+
+  const statusDot = document.getElementById("statusDot");
+  const connectBtn = document.getElementById("connectBtn");
+  const configSection = document.getElementById("configSection");
+  const syncSection = document.getElementById("syncSection");
+  const logArea = document.getElementById("logArea");
+  const progressFill = document.getElementById("progressFill");
+  const progressLabel = document.getElementById("progressLabel");
+
+  // ---- 로그 ----
+  function log(text, type = "info") {
+    const time = new Date().toLocaleTimeString("ko-KR", { hour12: false });
+    const entry = document.createElement("div");
+    entry.className = `log-entry ${type}`;
+    entry.textContent = `[${time}] ${text}`;
+    logArea.appendChild(entry);
+    logArea.scrollTop = logArea.scrollHeight;
+  }
+
+  // ---- Firebase 연결 ----
+  function toggleConnection() {
+    if (isConnected) { disconnect(); return; }
+    try {
+      const configStr = document.getElementById("fbConfig").value.trim();
+      const pid = document.getElementById("projectId").value.trim();
+      if (!configStr || !pid) { log("Firebase 설정과 프로젝트 ID를 입력하세요.", "err"); return; }
+
+      const config = JSON.parse(configStr);
+      if (!firebase.apps.length) firebase.initializeApp(config);
+      db = firebase.firestore();
+      currentProjectId = pid;
+
+      // 로컬 스토리지에 저장 (다음 실행 시 자동 입력)
+      localStorage.setItem("figma_fb_config", configStr);
+      localStorage.setItem("figma_project_id", pid);
+
+      startListening();
+    } catch (e) {
+      log(`연결 실패: ${e.message}`, "err");
+    }
+  }
+
+  // 이전 설정 복원
+  (function restoreConfig() {
+    const saved = localStorage.getItem("figma_fb_config");
+    const pid = localStorage.getItem("figma_project_id");
+    if (saved) document.getElementById("fbConfig").value = saved;
+    if (pid) document.getElementById("projectId").value = pid;
+  })();
+
+  // ---- Firestore 리스너 시작 ----
+  function startListening() {
+    const queueRef = db.collection("webtoon_projects").doc(currentProjectId).collection("figma_sync").doc("queue");
+
+    // queue 문서 실시간 감시 — 웹앱이 쓴 메시지를 읽어서 플러그인 코드로 전달
+    unsubQueue = queueRef.onSnapshot(snap => {
+      if (!snap.exists) return;
+      const msg = snap.data();
+      if (!msg || !msg.type) return;
+
+      log(`수신: ${msg.type}`, "info");
+      // Figma plugin sandbox로 전달
+      parent.postMessage({ pluginMessage: msg }, "*");
+    }, err => {
+      log(`Firestore 리스너 오류: ${err.message}`, "err");
+    });
+
+    isConnected = true;
+    statusDot.className = "status-dot connected";
+    connectBtn.textContent = "연결 해제";
+    syncSection.classList.remove("hidden");
+    log("Firestore 연결 성공 — queue 감시 시작", "ok");
+
+    // Heartbeat 시작 (10초마다 — 웹앱이 연결 상태 확인용)
+    sendHeartbeat();
+    heartbeatInterval = setInterval(sendHeartbeat, 10000);
+  }
+
+  function disconnect() {
+    if (unsubQueue) { unsubQueue(); unsubQueue = null; }
+    if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
+    isConnected = false;
+    statusDot.className = "status-dot error";
+    connectBtn.textContent = "연결";
+    syncSection.classList.add("hidden");
+    log("연결 해제됨", "warn");
+  }
+
+  // ---- Heartbeat: 플러그인이 살아있음을 웹앱에 알림 ----
+  async function sendHeartbeat() {
+    if (!db || !currentProjectId) return;
+    try {
+      await db.collection("webtoon_projects").doc(currentProjectId)
+        .collection("figma_sync").doc("status")
+        .set({ lastHeartbeat: firebase.firestore.FieldValue.serverTimestamp(), pluginActive: true }, { merge: true });
+    } catch (e) { /* 조용히 무시 */ }
+  }
+
+  // ---- 플러그인 코드(sandbox) → UI 응답 처리 ----
+  window.onmessage = async (event) => {
+    const msg = event.data.pluginMessage;
+    if (!msg) return;
+
+    switch (msg.type) {
+      case "SYNC_OK":
+        log(`동기화 완료: ${msg.id} → ${msg.figmaNodeId}`, "ok");
+        await writeStatus({ syncResult: "ok", message: `동기화 완료: ${msg.id}` });
+        break;
+
+      case "SYNC_ERROR":
+        log(`동기화 오류: ${msg.id} — ${msg.error}`, "err");
+        await writeStatus({ syncResult: "error", message: `오류: ${msg.error}` });
+        break;
+
+      case "BATCH_OK":
+        log(`일괄 동기화 완료: ${msg.count}페이지`, "ok");
+        progressFill.style.width = "100%";
+        progressLabel.textContent = "완료";
+        await writeStatus({ syncResult: "ok", message: `✅ Figma 동기화 완료: ${msg.count}페이지` });
+        break;
+
+      case "PROGRESS":
+        const pct = Math.round((msg.current / msg.total) * 100);
+        progressFill.style.width = pct + "%";
+        progressLabel.textContent = `${msg.label} (${msg.current}/${msg.total})`;
+        await writeStatus({ progress: { current: msg.current, total: msg.total, label: msg.label } });
+        break;
+
+      case "STATUS":
+        document.getElementById("pageCount").textContent = `${msg.pageCount} 페이지`;
+        document.getElementById("syncStatus").textContent = msg.connected ? "연결됨" : "끊김";
+        break;
+
+      case "PONG":
+        log("Ping/Pong 확인", "ok");
+        break;
+    }
+  };
+
+  // Firestore status 문서에 응답 쓰기 (웹앱이 읽음)
+  async function writeStatus(data) {
+    if (!db || !currentProjectId) return;
+    try {
+      await db.collection("webtoon_projects").doc(currentProjectId)
+        .collection("figma_sync").doc("status")
+        .set({ ...data, lastHeartbeat: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    } catch (e) { console.warn("writeStatus error:", e); }
+  }
+</script>
+</body>
+</html>
