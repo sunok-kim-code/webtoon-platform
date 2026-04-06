@@ -1399,6 +1399,96 @@ export async function savePanelResults(
   }
 }
 
+// ─── 전체 스토리 분석 결과 저장/불러오기 ────────────────────────
+// Firestore 경로: webtoon_projects/{projectId}/analysis/full_story_bible
+// episodeTexts(원문 텍스트)는 저장하지 않음 (용량 절약)
+
+/**
+ * 전체 스토리 분석 결과를 Firestore에 저장합니다.
+ * 크기 최적화: episodeTexts(원문 텍스트) 제외, 나머지 구조 데이터만 저장
+ */
+export async function saveFullStoryBible(
+  projectId: string,
+  result: {
+    total_episodes: number;
+    character_bible: unknown[];
+    outfit_library: unknown[];
+    location_library: unknown[];
+    storyboard_overview: unknown;
+    episodes: unknown[];
+  }
+): Promise<void> {
+  try {
+    const { collection, doc, setDoc } = await import("firebase/firestore");
+    const db = getDb();
+
+    const projectRef = doc(collection(db, "webtoon_projects"), projectId);
+    const analysisRef = doc(collection(projectRef, "analysis"), "full_story_bible");
+
+    // episodeTexts 는 저장하지 않음 (원문 텍스트 — 매우 클 수 있음)
+    const dataToSave = {
+      total_episodes: result.total_episodes,
+      character_bible: result.character_bible,
+      outfit_library: result.outfit_library,
+      location_library: result.location_library,
+      storyboard_overview: result.storyboard_overview,
+      episodes: result.episodes,
+      savedAt: Date.now(),
+    };
+
+    await setDoc(analysisRef, dataToSave);
+    console.log("[Firebase] Full story bible saved:", projectId, `(${result.total_episodes}화)`);
+  } catch (error) {
+    console.error("[Firebase] saveFullStoryBible error:", error);
+    throw error;
+  }
+}
+
+/**
+ * 저장된 전체 스토리 분석 결과를 Firestore에서 불러옵니다.
+ * 없으면 null 반환.
+ */
+export async function loadFullStoryBible(
+  projectId: string
+): Promise<{
+  total_episodes: number;
+  character_bible: unknown[];
+  outfit_library: unknown[];
+  location_library: unknown[];
+  storyboard_overview: unknown;
+  episodes: unknown[];
+  savedAt?: number;
+} | null> {
+  try {
+    const { collection, doc, getDoc } = await import("firebase/firestore");
+    const db = getDb();
+
+    const projectRef = doc(collection(db, "webtoon_projects"), projectId);
+    const analysisRef = doc(collection(projectRef, "analysis"), "full_story_bible");
+
+    const snap = await getDoc(analysisRef);
+    if (!snap.exists()) {
+      console.log("[Firebase] No full story bible found for project:", projectId);
+      return null;
+    }
+
+    const data = snap.data() as {
+      total_episodes: number;
+      character_bible: unknown[];
+      outfit_library: unknown[];
+      location_library: unknown[];
+      storyboard_overview: unknown;
+      episodes: unknown[];
+      savedAt?: number;
+    };
+    console.log("[Firebase] Full story bible loaded:", projectId, `(${data.total_episodes}화)`);
+    return data;
+  } catch (error) {
+    console.error("[Firebase] loadFullStoryBible error:", error);
+    return null;
+  }
+}
+
 // ─── 내보내기 ────────────────────────────────────────────────
 
 export const firebaseService = {
@@ -1433,6 +1523,9 @@ export const firebaseService = {
   // 파이프라인 데이터
   savePipelineSnapshot,
   loadPipelineSnapshot,
+  // 전체 스토리 분석 바이블
+  saveFullStoryBible,
+  loadFullStoryBible,
   // 레퍼런스 CRUD
   fetchCharacters,
   saveCharacter,

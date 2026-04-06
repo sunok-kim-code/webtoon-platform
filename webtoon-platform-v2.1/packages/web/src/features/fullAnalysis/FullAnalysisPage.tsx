@@ -4,7 +4,7 @@
 // 캐릭터/장소/에피소드를 자동으로 생성합니다.
 // ============================================================
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import {
   analyzeFullStory,
@@ -20,6 +20,7 @@ import {
   getGeminiAuthMode,
   type GeminiModelId,
 } from "@/services/geminiService";
+import { firebaseService } from "@/services/firebase";
 import { useReferenceStore } from "@/stores/referenceStore";
 import { useEpisodeStore } from "@/stores/episodeStore";
 import type { Episode } from "@webtoon/shared/types";
@@ -74,10 +75,38 @@ export function FullAnalysisPage() {
   const [createdEpisodes, setCreatedEpisodes] = useState<Episode[]>([]);
   const [upsertStats, setUpsertStats] = useState<UpsertStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isLoadingPrev, setIsLoadingPrev] = useState(true);
+  const [prevSavedAt, setPrevSavedAt] = useState<number | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { setCharacters, setLocations } = useReferenceStore();
   const { setEpisodes } = useEpisodeStore();
+
+  // ─── 마운트 시 이전 분석 결과 복원 ──────────────────────────
+  useEffect(() => {
+    if (!projectId) { setIsLoadingPrev(false); return; }
+    setIsLoadingPrev(true);
+    firebaseService.loadFullStoryBible(projectId)
+      .then((saved) => {
+        if (saved) {
+          // FullStoryAnalysisResult 형태로 복원 (episodeTexts는 빈 배열로 대체)
+          setAnalysisResult({
+            total_episodes: saved.total_episodes as number,
+            character_bible: (saved.character_bible as FullStoryAnalysisResult["character_bible"]) || [],
+            outfit_library: (saved.outfit_library as FullStoryAnalysisResult["outfit_library"]) || [],
+            location_library: (saved.location_library as FullStoryAnalysisResult["location_library"]) || [],
+            storyboard_overview: (saved.storyboard_overview as FullStoryAnalysisResult["storyboard_overview"]) || { total_estimated_panels: 0, per_episode_panel_count: [] },
+            episodes: (saved.episodes as FullStoryAnalysisResult["episodes"]) || [],
+            episodeTexts: [], // 원문은 저장하지 않으므로 빈 배열
+          });
+          setPrevSavedAt(saved.savedAt as number ?? null);
+          setProgress({ step: "done", message: "이전 분석 결과 불러옴", progress: 100 });
+          console.log("[FullAnalysis] 이전 분석 결과 복원 완료");
+        }
+      })
+      .catch((e) => console.warn("[FullAnalysis] 이전 결과 로드 실패:", e))
+      .finally(() => setIsLoadingPrev(false));
+  }, [projectId]);
 
   // ─── 파일 읽기 ─────────────────────────────────────────────
 
@@ -162,6 +191,15 @@ export function FullAnalysisPage() {
       setLocations(locations);
       setEpisodes(eps);
 
+      // 4. 분석 결과 Firebase에 저장 (페이지 재방문 시 복원 가능)
+      try {
+        await firebaseService.saveFullStoryBible(projectId, result);
+        setPrevSavedAt(Date.now());
+        console.log("[FullAnalysis] 분석 결과 저장 완료");
+      } catch (saveErr) {
+        console.warn("[FullAnalysis] 분석 결과 저장 실패 (분석 자체는 성공):", saveErr);
+      }
+
     } catch (e: any) {
       setError(e.message || "알 수 없는 오류가 발생했습니다.");
       setProgress({ step: "error", message: e.message, progress: 0, error: e.message });
@@ -187,6 +225,25 @@ export function FullAnalysisPage() {
           1화~N화가 포함된 텍스트 파일을 업로드하면 AI가 전체를 분석하여 캐릭터, 장소, 에피소드, 스토리보드를 자동 생성합니다.
         </p>
       </div>
+
+      {/* 이전 분석 결과 로딩 중 */}
+      {isLoadingPrev && (
+        <div style={{ padding: "10px 14px", background: "#F9FAFB", borderRadius: 8, border: "1px solid #E5E7EB", marginBottom: 16, fontSize: 13, color: "#6B7280" }}>
+          ⏳ 이전 분석 결과 불러오는 중...
+        </div>
+      )}
+
+      {/* 이전 분석 결과 복원 완료 배너 */}
+      {!isLoadingPrev && prevSavedAt && !isAnalyzing && (
+        <div style={{ padding: "10px 14px", background: "#EFF6FF", borderRadius: 8, border: "1px solid #BFDBFE", marginBottom: 16, fontSize: 13, color: "#1D4ED8", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span>📂 이전 분석 결과 불러옴 ({new Date(prevSavedAt).toLocaleString("ko-KR")} 저장)</span>
+          <button
+            onClick={() => { setAnalysisResult(null); setPrevSavedAt(null); setProgress({ step: "idle", message: "", progress: 0 }); }}
+            style={{ fontSize: 12, color: "#6B7280", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
+            초기화
+          </button>
+        </div>
+      )}
 
       {/* AI 상태 표시 */}
       <div style={{
