@@ -258,19 +258,13 @@ export function ReferenceGallery() {
   const [bulkGenError, setBulkGenError] = useState<string | null>(null);
   const [isRelinking, setIsRelinking] = useState(false);
   const [relinkResult, setRelinkResult] = useState<string | null>(null);
-
-  // ── 카테고리별 모델 선택 ──
-  const [charModel, setCharModel] = useState(() => localStorage.getItem("KIE_CHAR_MODEL") || getSelectedImageModel());
-  const [locModel, setLocModel] = useState(() => localStorage.getItem("KIE_LOC_MODEL") || getSelectedImageModel());
-  const [outfitModel, setOutfitModel] = useState(() => localStorage.getItem("KIE_OUTFIT_MODEL") || getSelectedImageModel());
+  const [isMergingOutfits, setIsMergingOutfits] = useState(false);
+  const [mergeResult, setMergeResult] = useState<string | null>(null);
 
   const handleModelChange = (modelId: string) => {
     setSelectedModel(modelId);
     setSelectedImageModel(modelId);
   };
-  const handleCharModelChange = (modelId: string) => { setCharModel(modelId); localStorage.setItem("KIE_CHAR_MODEL", modelId); };
-  const handleLocModelChange = (modelId: string) => { setLocModel(modelId); localStorage.setItem("KIE_LOC_MODEL", modelId); };
-  const handleOutfitModelChange = (modelId: string) => { setOutfitModel(modelId); localStorage.setItem("KIE_OUTFIT_MODEL", modelId); };
 
   // ── 캐릭터 특성 편집 ──
   const openTraitsEditor = (char: Character) => {
@@ -320,7 +314,7 @@ export function ReferenceGallery() {
     }
     try {
       const result = await generateImage(prompt, {
-        imageSize: "portrait_4_3", modelId: outfitModel,
+        imageSize: "portrait_4_3", modelId: selectedModel,
         referenceImageUrls: refImageUrls,
         onProgress: (state: KieTaskState, elapsed: number) =>
           setBulkGenProgress(p => ({ ...p, [key]: `${stateLabels[state] || state} (${elapsed}초)` })),
@@ -338,7 +332,7 @@ export function ReferenceGallery() {
     } catch (e: any) {
       setBulkGenProgress(p => ({ ...p, [key]: `❌ ${(e.message || "오류").slice(0, 60)}` }));
     }
-  }, [kieReady, resolvedProjectId, artStyleKey, outfitModel, addOrUpdateOutfit]);
+  }, [kieReady, resolvedProjectId, artStyleKey, selectedModel, addOrUpdateOutfit]);
 
   // ── 기준 외형 이미지 핀 고정 ──
   const handleSetBaseRef = useCallback(async (charId: string, refId: string) => {
@@ -567,7 +561,7 @@ export function ReferenceGallery() {
       try {
         const result = await generateImage(prompt, {
           imageSize: "portrait_4_3",
-          modelId: charModel,
+          modelId: selectedModel,
           onProgress: (state: KieTaskState, elapsed: number) =>
             setBulkGenProgress(p => ({ ...p, [key]: `${stateLabels[state] || state} (${elapsed}초)` })),
         });
@@ -590,7 +584,7 @@ export function ReferenceGallery() {
       }
     }
     setIsBulkGenChar(false);
-  }, [kieReady, resolvedProjectId, charModel, buildPromptForChar]);
+  }, [kieReady, resolvedProjectId, selectedModel, buildPromptForChar]);
 
   // ── 장소 일괄 생성 ────────────────────────────────────────────
   const handleBulkGenerateLocs = useCallback(async () => {
@@ -606,7 +600,7 @@ export function ReferenceGallery() {
       try {
         const result = await generateImage(prompt, {
           imageSize: "landscape_4_3",
-          modelId: locModel,
+          modelId: selectedModel,
           onProgress: (state: KieTaskState, elapsed: number) =>
             setBulkGenProgress(p => ({ ...p, [key]: `${stateLabels[state] || state} (${elapsed}초)` })),
         });
@@ -629,7 +623,7 @@ export function ReferenceGallery() {
       }
     }
     setIsBulkGenLoc(false);
-  }, [kieReady, resolvedProjectId, locModel, buildPromptForLoc]);
+  }, [kieReady, resolvedProjectId, selectedModel, buildPromptForLoc]);
 
   // ── 의상 일괄 생성 ────────────────────────────────────────────
   const handleBulkGenerateOutfits = useCallback(async () => {
@@ -669,7 +663,7 @@ export function ReferenceGallery() {
       try {
         const result = await generateImage(prompt, {
           imageSize: "portrait_4_3",
-          modelId: outfitModel,
+          modelId: selectedModel,
           referenceImageUrls: refImageUrls,
           onProgress: (state: KieTaskState, elapsed: number) =>
             setBulkGenProgress(p => ({ ...p, [key]: `${stateLabels[state] || state} (${elapsed}초)` })),
@@ -690,7 +684,7 @@ export function ReferenceGallery() {
       }
     }
     setIsBulkGenOutfit(false);
-  }, [kieReady, resolvedProjectId, artStyleKey, outfitModel, addOrUpdateOutfit]);
+  }, [kieReady, resolvedProjectId, artStyleKey, selectedModel, addOrUpdateOutfit]);
 
   // ── 의상 캐릭터 연결 복구 (characterId="unknown" 인 의상을 이름 prefix 매칭으로 재연결) ──
   const handleRelinkOutfits = useCallback(async () => {
@@ -730,6 +724,83 @@ export function ReferenceGallery() {
     setRelinkResult(`복구 완료: ${fixed}개 연결됨, ${failed}개 실패 (총 ${unknownOutfits.length}개 처리)`);
     setIsRelinking(false);
   }, [outfits, characters, addOrUpdateOutfit]);
+
+  // ── 중복 의상 병합 (같은 캐릭터, 유사한 의상 키워드를 가진 중복 항목 제거) ──
+  // 판단 기준: 같은 characterId + ID의 캐릭터 prefix 제거 후 키워드 60% 이상 일치
+  const handleMergeOutfits = useCallback(async () => {
+    setIsMergingOutfits(true);
+    setMergeResult(null);
+    let merged = 0;
+
+    try {
+      // 캐릭터별로 의상 그룹화
+      const byChar = new Map<string, OutfitEntry[]>();
+      for (const o of outfits) {
+        const key = o.characterId || "unknown";
+        if (!byChar.has(key)) byChar.set(key, []);
+        byChar.get(key)!.push(o);
+      }
+
+      for (const [charId, charOutfits] of byChar) {
+        if (charId === "unknown" || charOutfits.length < 2) continue;
+        const charName = charOutfits[0].characterName || "";
+        const charNameNorm = charName.toLowerCase().replace(/\s+/g, "_");
+
+        // 각 의상의 "핵심 키워드" 추출 (캐릭터 이름 prefix 제거)
+        const withKeywords = charOutfits.map(o => {
+          const idLower = o.id.toLowerCase();
+          const idPart = idLower.startsWith(charNameNorm + "_") ? idLower.slice(charNameNorm.length + 1) : idLower;
+          const keywords = idPart.split("_").filter(w => w.length > 1);
+          return { outfit: o, keywords };
+        });
+
+        // 중복 쌍 찾기 → 레퍼런스 병합 후 삭제
+        const toDelete = new Set<string>();
+        for (let i = 0; i < withKeywords.length; i++) {
+          if (toDelete.has(withKeywords[i].outfit.id)) continue;
+          for (let j = i + 1; j < withKeywords.length; j++) {
+            if (toDelete.has(withKeywords[j].outfit.id)) continue;
+            const a = withKeywords[i];
+            const b = withKeywords[j];
+            if (a.keywords.length === 0 || b.keywords.length === 0) continue;
+            const overlap = a.keywords.filter(w => b.keywords.includes(w)).length;
+            const ratio = overlap / Math.max(a.keywords.length, b.keywords.length);
+            if (ratio >= 0.6) {
+              // 더 많은 레퍼런스를 가진 것을 유지, 나머지 삭제
+              const keepOutfit = a.outfit.references.length >= b.outfit.references.length ? a.outfit : b.outfit;
+              const dropOutfit = keepOutfit === a.outfit ? b.outfit : a.outfit;
+              // 레퍼런스 병합: keep에 drop의 레퍼런스 추가
+              const mergedRefs = [...keepOutfit.references];
+              for (const ref of dropOutfit.references) {
+                if (!mergedRefs.find(r => r.id === ref.id)) mergedRefs.push(ref);
+              }
+              const updatedKeep = {
+                ...keepOutfit,
+                references: mergedRefs,
+                usageCount: (keepOutfit.usageCount || 0) + (dropOutfit.usageCount || 0),
+                updatedAt: Date.now(),
+              };
+              addOrUpdateOutfit(updatedKeep);
+              toDelete.add(dropOutfit.id);
+              console.log(`[Gallery] 의상 병합: "${dropOutfit.id}" → "${keepOutfit.id}" (키워드 겹침 ${Math.round(ratio * 100)}%)`);
+              merged++;
+            }
+          }
+        }
+
+        // 병합된 의상 삭제 (store의 removeOutfit이 Firebase도 함께 삭제)
+        for (const dropId of toDelete) {
+          removeOutfit(dropId);
+        }
+      }
+
+      setMergeResult(merged > 0 ? `${merged}쌍 병합 완료` : "중복 의상 없음");
+    } catch (e: any) {
+      setMergeResult(`오류: ${e.message || "병합 실패"}`);
+    } finally {
+      setIsMergingOutfits(false);
+    }
+  }, [outfits, addOrUpdateOutfit, removeOutfit]);
 
   const handleCreateCharacter = async () => {
     if (!newCharData.name.trim()) { alert("캐릭터 이름을 입력하세요"); return; }
@@ -1126,40 +1197,19 @@ export function ReferenceGallery() {
             const charProgress = characters.filter(c => bulkGenProgress[`char_${c.id}`]);
             if (missingChars.length === 0 && charProgress.length === 0) return null;
             return (
-              <div style={{ background: "#F5F3FF", border: "1px solid #DDD6FE", borderRadius: 10, padding: "10px 14px", marginBottom: 12 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#5B21B6", flexShrink: 0 }}>✨ 일괄 생성</span>
-                  <select value={charModel} onChange={e => handleCharModelChange(e.target.value)}
-                    style={{ fontSize: 12, padding: "4px 6px", borderRadius: 6, border: "1px solid #DDD6FE", background: "white", color: "#374151", flex: 1, minWidth: 120, maxWidth: 200 }}>
-                    {KIE_IMAGE_MODELS.filter(m => m.mode === "text2img").map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                  </select>
-                  {missingChars.length > 0 ? (
-                    <button onClick={handleBulkGenerateChars} disabled={isBulkGenChar || isBulkGenLoc || isBulkGenOutfit}
-                      style={{ padding: "5px 12px", background: isBulkGenChar ? "#9CA3AF" : "#7C3AED", color: "white", border: "none", borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: isBulkGenChar ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
-                      {isBulkGenChar ? "⏳ 생성 중..." : `캐릭터 ${missingChars.length}명 레퍼런스 생성`}
-                    </button>
-                  ) : <span style={{ fontSize: 12, color: "#10B981" }}>✓ 모두 완료</span>}
-                </div>
-                {charProgress.length > 0 && (
-                  <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 5 }}>
-                    {charProgress.map(c => {
-                      const key = `char_${c.id}`;
-                      const prog = bulkGenProgress[key];
-                      const imgUrl = bulkGenImages[key] || c.references[0]?.storageUrl;
-                      return (
-                        <div key={key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          {imgUrl ? <img src={imgUrl} style={{ width: 32, height: 44, objectFit: "cover", borderRadius: 5, border: "1px solid #DDD6FE" }} />
-                            : <div style={{ width: 32, height: 44, background: "#EDE9FE", borderRadius: 5 }} />}
-                          <div>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>{c.name}</div>
-                            <div style={{ fontSize: 11, color: prog?.startsWith("✓") ? "#10B981" : prog?.startsWith("❌") ? "#EF4444" : "#7C3AED" }}>{prog}</div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                {bulkGenError && isBulkGenChar && <div style={{ marginTop: 6, fontSize: 11, color: "#EF4444" }}>❌ {bulkGenError}</div>}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                {missingChars.length > 0 ? (
+                  <button onClick={handleBulkGenerateChars} disabled={isBulkGenChar || isBulkGenLoc || isBulkGenOutfit}
+                    style={{ padding: "5px 14px", background: isBulkGenChar ? "#9CA3AF" : "#7C3AED", color: "white", border: "none", borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: isBulkGenChar ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
+                    {isBulkGenChar ? "⏳ 생성 중..." : `캐릭터 ${missingChars.length}명 일괄 생성`}
+                  </button>
+                ) : null}
+                {charProgress.map(c => {
+                  const key = `char_${c.id}`;
+                  const prog = bulkGenProgress[key];
+                  return <span key={key} style={{ fontSize: 11, color: prog?.startsWith("✓") ? "#10B981" : prog?.startsWith("❌") ? "#EF4444" : "#7C3AED" }}>{c.name}: {prog}</span>;
+                })}
+                {bulkGenError && isBulkGenChar && <span style={{ fontSize: 11, color: "#EF4444" }}>❌ {bulkGenError}</span>}
               </div>
             );
           })()}
@@ -1523,40 +1573,19 @@ export function ReferenceGallery() {
             const locProgress = locations.filter(l => bulkGenProgress[`loc_${l.id}`]);
             if (missingLocs.length === 0 && locProgress.length === 0) return null;
             return (
-              <div style={{ background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 10, padding: "10px 14px", marginBottom: 12 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#166534", flexShrink: 0 }}>✨ 일괄 생성</span>
-                  <select value={locModel} onChange={e => handleLocModelChange(e.target.value)}
-                    style={{ fontSize: 12, padding: "4px 6px", borderRadius: 6, border: "1px solid #BBF7D0", background: "white", color: "#374151", flex: 1, minWidth: 120, maxWidth: 200 }}>
-                    {KIE_IMAGE_MODELS.filter(m => m.mode === "text2img").map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                  </select>
-                  {missingLocs.length > 0 ? (
-                    <button onClick={handleBulkGenerateLocs} disabled={isBulkGenChar || isBulkGenLoc || isBulkGenOutfit}
-                      style={{ padding: "5px 12px", background: isBulkGenLoc ? "#9CA3AF" : "#16A34A", color: "white", border: "none", borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: isBulkGenLoc ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
-                      {isBulkGenLoc ? "⏳ 생성 중..." : `장소 ${missingLocs.length}개 레퍼런스 생성`}
-                    </button>
-                  ) : <span style={{ fontSize: 12, color: "#10B981" }}>✓ 모두 완료</span>}
-                </div>
-                {locProgress.length > 0 && (
-                  <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 5 }}>
-                    {locProgress.map(l => {
-                      const key = `loc_${l.id}`;
-                      const prog = bulkGenProgress[key];
-                      const imgUrl = bulkGenImages[key] || l.references[0]?.storageUrl;
-                      return (
-                        <div key={key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          {imgUrl ? <img src={imgUrl} style={{ width: 44, height: 32, objectFit: "cover", borderRadius: 5, border: "1px solid #BBF7D0" }} />
-                            : <div style={{ width: 44, height: 32, background: "#DCFCE7", borderRadius: 5 }} />}
-                          <div>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>{l.name}</div>
-                            <div style={{ fontSize: 11, color: prog?.startsWith("✓") ? "#10B981" : prog?.startsWith("❌") ? "#EF4444" : "#166534" }}>{prog}</div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                {bulkGenError && isBulkGenLoc && <div style={{ marginTop: 6, fontSize: 11, color: "#EF4444" }}>❌ {bulkGenError}</div>}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                {missingLocs.length > 0 ? (
+                  <button onClick={handleBulkGenerateLocs} disabled={isBulkGenChar || isBulkGenLoc || isBulkGenOutfit}
+                    style={{ padding: "5px 14px", background: isBulkGenLoc ? "#9CA3AF" : "#16A34A", color: "white", border: "none", borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: isBulkGenLoc ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
+                    {isBulkGenLoc ? "⏳ 생성 중..." : `장소 ${missingLocs.length}개 일괄 생성`}
+                  </button>
+                ) : null}
+                {locProgress.map(l => {
+                  const key = `loc_${l.id}`;
+                  const prog = bulkGenProgress[key];
+                  return <span key={key} style={{ fontSize: 11, color: prog?.startsWith("✓") ? "#10B981" : prog?.startsWith("❌") ? "#EF4444" : "#166534" }}>{l.name}: {prog}</span>;
+                })}
+                {bulkGenError && isBulkGenLoc && <span style={{ fontSize: 11, color: "#EF4444" }}>❌ {bulkGenError}</span>}
               </div>
             );
           })()}
@@ -1640,62 +1669,41 @@ export function ReferenceGallery() {
             <button onClick={() => openOutfitLibAdd()} style={styles.newBtn}>+ 새 의상</button>
           </div>
 
-          {/* ── 의상 일괄 생성 + 캐릭터 연결 복구 ── */}
-          {kieReady && (() => {
-            const missingOutfits = outfits.filter(o => o.references.length === 0);
+          {/* ── 의상 일괄 생성 + 유지관리 버튼 ── */}
+          {(() => {
+            const missingOutfits = kieReady ? outfits.filter(o => o.references.length === 0) : [];
             const outfitProgress = outfits.filter(o => bulkGenProgress[`outfit_${o.id}`]);
             const unknownOutfits = outfits.filter(o => o.characterId === "unknown" || !o.characterId);
-            if (missingOutfits.length === 0 && outfitProgress.length === 0 && unknownOutfits.length === 0) return null;
+            const hasSomething = missingOutfits.length > 0 || outfitProgress.length > 0 || unknownOutfits.length > 0 || outfits.length >= 2;
+            if (!hasSomething) return null;
             return (
-              <div style={{ background: "#FFF7ED", border: "1px solid #FED7AA", borderRadius: 10, padding: "10px 14px", marginBottom: 12 }}>
-                {/* 일괄 생성 행 */}
-                {missingOutfits.length > 0 || outfitProgress.length > 0 ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: unknownOutfits.length > 0 ? 8 : 0 }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#92400E", flexShrink: 0 }}>✨ 일괄 생성</span>
-                    <select value={outfitModel} onChange={e => handleOutfitModelChange(e.target.value)}
-                      style={{ fontSize: 12, padding: "4px 6px", borderRadius: 6, border: "1px solid #FED7AA", background: "white", color: "#374151", flex: 1, minWidth: 120, maxWidth: 200 }}>
-                      {KIE_IMAGE_MODELS.filter(m => m.mode === "text2img").map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                    </select>
-                    {missingOutfits.length > 0 ? (
-                      <button onClick={handleBulkGenerateOutfits} disabled={isBulkGenChar || isBulkGenLoc || isBulkGenOutfit}
-                        style={{ padding: "5px 12px", background: isBulkGenOutfit ? "#9CA3AF" : "#D97706", color: "white", border: "none", borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: isBulkGenOutfit ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
-                        {isBulkGenOutfit ? "⏳ 생성 중..." : `의상 ${missingOutfits.length}개 레퍼런스 생성`}
-                      </button>
-                    ) : <span style={{ fontSize: 12, color: "#10B981" }}>✓ 모두 완료</span>}
-                  </div>
-                ) : null}
-                {/* 캐릭터 연결 복구 행 */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                {kieReady && missingOutfits.length > 0 && (
+                  <button onClick={handleBulkGenerateOutfits} disabled={isBulkGenChar || isBulkGenLoc || isBulkGenOutfit}
+                    style={{ padding: "5px 14px", background: isBulkGenOutfit ? "#9CA3AF" : "#D97706", color: "white", border: "none", borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: isBulkGenOutfit ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
+                    {isBulkGenOutfit ? "⏳ 생성 중..." : `의상 ${missingOutfits.length}개 일괄 생성`}
+                  </button>
+                )}
                 {unknownOutfits.length > 0 && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", borderTop: (missingOutfits.length > 0 || outfitProgress.length > 0) ? "1px solid #FED7AA" : "none", paddingTop: (missingOutfits.length > 0 || outfitProgress.length > 0) ? 8 : 0 }}>
-                    <span style={{ fontSize: 12, color: "#92400E" }}>⚠️ 캐릭터 미연결 의상 {unknownOutfits.length}개</span>
-                    <button onClick={handleRelinkOutfits} disabled={isRelinking}
-                      style={{ padding: "5px 12px", background: isRelinking ? "#9CA3AF" : "#B45309", color: "white", border: "none", borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: isRelinking ? "not-allowed" : "pointer" }}>
-                      {isRelinking ? "⏳ 복구 중..." : "캐릭터 연결 복구"}
-                    </button>
-                    {relinkResult && <span style={{ fontSize: 11, color: "#166534" }}>✓ {relinkResult}</span>}
-                  </div>
+                  <button onClick={handleRelinkOutfits} disabled={isRelinking}
+                    style={{ padding: "5px 12px", background: isRelinking ? "#9CA3AF" : "#B45309", color: "white", border: "none", borderRadius: 7, fontWeight: 600, fontSize: 12, cursor: isRelinking ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
+                    {isRelinking ? "⏳ 복구 중..." : `⚠️ 캐릭터 연결 복구 (${unknownOutfits.length}개)`}
+                  </button>
                 )}
-                {/* 진행 상황 */}
-                {outfitProgress.length > 0 && (
-                  <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 5 }}>
-                    {outfitProgress.map(o => {
-                      const key = `outfit_${o.id}`;
-                      const prog = bulkGenProgress[key];
-                      const imgUrl = bulkGenImages[key] || o.references[0]?.storageUrl;
-                      return (
-                        <div key={key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          {imgUrl ? <img src={imgUrl} style={{ width: 32, height: 44, objectFit: "cover", borderRadius: 5, border: "1px solid #FED7AA" }} />
-                            : <div style={{ width: 32, height: 44, background: "#FEF3C7", borderRadius: 5 }} />}
-                          <div>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>{o.characterName} · {o.label}</div>
-                            <div style={{ fontSize: 11, color: prog?.startsWith("✓") ? "#10B981" : prog?.startsWith("❌") ? "#EF4444" : "#92400E" }}>{prog}</div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                {outfits.length >= 2 && (
+                  <button onClick={handleMergeOutfits} disabled={isMergingOutfits}
+                    style={{ padding: "5px 12px", background: isMergingOutfits ? "#9CA3AF" : "#4B5563", color: "white", border: "none", borderRadius: 7, fontWeight: 600, fontSize: 12, cursor: isMergingOutfits ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
+                    {isMergingOutfits ? "⏳ 병합 중..." : "중복 의상 병합"}
+                  </button>
                 )}
-                {bulkGenError && isBulkGenOutfit && <div style={{ marginTop: 6, fontSize: 11, color: "#EF4444" }}>❌ {bulkGenError}</div>}
+                {outfitProgress.map(o => {
+                  const key = `outfit_${o.id}`;
+                  const prog = bulkGenProgress[key];
+                  return <span key={key} style={{ fontSize: 11, color: prog?.startsWith("✓") ? "#10B981" : prog?.startsWith("❌") ? "#EF4444" : "#92400E" }}>{o.characterName} · {o.label}: {prog}</span>;
+                })}
+                {relinkResult && <span style={{ fontSize: 11, color: "#166534" }}>✓ {relinkResult}</span>}
+                {mergeResult && <span style={{ fontSize: 11, color: mergeResult.startsWith("오류") ? "#EF4444" : "#166534" }}>✓ {mergeResult}</span>}
+                {bulkGenError && isBulkGenOutfit && <span style={{ fontSize: 11, color: "#EF4444" }}>❌ {bulkGenError}</span>}
               </div>
             );
           })()}
