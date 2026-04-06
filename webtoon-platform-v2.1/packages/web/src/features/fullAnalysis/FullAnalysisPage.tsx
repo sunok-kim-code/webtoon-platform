@@ -459,6 +459,19 @@ export function FullAnalysisPage() {
                   ⏭ {upsertStats.skipped}개 변경 없음
                 </span>
               )}
+              {upsertStats.saveErrors && upsertStats.saveErrors.length > 0 && (
+                <div style={{ width: "100%", padding: "10px 14px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 10, marginTop: 8 }}>
+                  <div style={{ fontWeight: 700, color: "#DC2626", fontSize: 13, marginBottom: 6 }}>
+                    ⚠️ Firebase 저장 실패 {upsertStats.saveErrors.length}건 — 새로고침 후 데이터가 사라질 수 있습니다
+                  </div>
+                  {upsertStats.saveErrors.map((err, i) => (
+                    <div key={i} style={{ fontSize: 12, color: "#B91C1C", marginBottom: 2 }}>• {err}</div>
+                  ))}
+                  <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 6 }}>
+                    설정 → Firebase 설정을 확인하거나 Firestore 규칙/권한을 점검해주세요.
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

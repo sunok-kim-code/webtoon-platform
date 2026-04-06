@@ -655,6 +655,10 @@ export async function analyzeFullStory(
 
   report("parsing", "최종 결과 정리 중...", 92);
 
+  // 씬당 평균 3 패널로 추정 (Phase 2 미실행 시 대체값)
+  const perEpisodePanelCount = analyzedEpisodes.map(ep => (ep.total_scenes || 0) * 3);
+  const totalEstimatedPanels = perEpisodePanelCount.reduce((s, n) => s + n, 0);
+
   const result: FullStoryAnalysisResult = {
     total_episodes: analyzedEpisodes.length,
     character_bible: bible.character_bible,
@@ -663,8 +667,8 @@ export async function analyzeFullStory(
     episodes: analyzedEpisodes,
     episodeTexts,  // 화별 원본 텍스트 — Pipeline 씬 텍스트 저장에 사용
     storyboard_overview: {
-      total_estimated_panels: 0,  // Phase 2 미실행 → 패널 수 미산정
-      per_episode_panel_count: [],
+      total_estimated_panels: totalEstimatedPanels,
+      per_episode_panel_count: perEpisodePanelCount,
     },
   };
 
@@ -723,7 +727,7 @@ export async function createEpisodesFromAnalysis(
   await ensureFirebaseReady();
 
   const now = Date.now();
-  const stats: UpsertStats = { created: 0, updated: 0, skipped: 0 };
+  const stats: UpsertStats = { created: 0, updated: 0, skipped: 0, saveErrors: [] };
 
   // ── 기존 데이터 로드 (중복 체크 기준) ────────────────────────
   const [existingChars, existingLocs, existingOutfits, existingEpisodes] = await Promise.all([
@@ -760,10 +764,11 @@ export async function createEpisodesFromAnalysis(
         characters.push(updated);
         stats.updated++;
         console.log(`[FullStory] 캐릭터 업데이트: ${cb.name} (ID: ${existing.id})`);
-      } catch (e) {
-        console.warn(`[FullStory] 캐릭터 업데이트 실패: ${cb.name}`, e);
+      } catch (e: any) {
+        const msg = `캐릭터 저장 실패 [${cb.name}]: ${e?.message || e}`;
+        console.error(`[FullStory] ${msg}`, e);
         characters.push(updated);
-        stats.skipped++;
+        stats.saveErrors.push(msg);
       }
     } else {
       // 신규 캐릭터 생성
@@ -783,10 +788,11 @@ export async function createEpisodesFromAnalysis(
         characters.push(created);
         stats.created++;
         console.log(`[FullStory] 캐릭터 신규 생성: ${cb.name}`);
-      } catch (e) {
-        console.warn(`[FullStory] 캐릭터 생성 실패: ${cb.name}`, e);
+      } catch (e: any) {
+        const msg = `캐릭터 저장 실패 [${cb.name}]: ${e?.message || e}`;
+        console.error(`[FullStory] ${msg}`, e);
         characters.push(created);
-        stats.skipped++;
+        stats.saveErrors.push(msg);
       }
     }
   }
@@ -814,10 +820,11 @@ export async function createEpisodesFromAnalysis(
         locations.push(updated);
         stats.updated++;
         console.log(`[FullStory] 장소 업데이트: ${locName}`);
-      } catch (e) {
-        console.warn(`[FullStory] 장소 업데이트 실패: ${locName}`, e);
+      } catch (e: any) {
+        const msg = `장소 저장 실패 [${locName}]: ${e?.message || e}`;
+        console.error(`[FullStory] ${msg}`, e);
         locations.push(updated);
-        stats.skipped++;
+        stats.saveErrors.push(msg);
       }
     } else {
       const created: Location = {
@@ -838,10 +845,11 @@ export async function createEpisodesFromAnalysis(
         locations.push(created);
         stats.created++;
         console.log(`[FullStory] 장소 신규 생성: ${locName}`);
-      } catch (e) {
-        console.warn(`[FullStory] 장소 생성 실패: ${locName}`, e);
+      } catch (e: any) {
+        const msg = `장소 저장 실패 [${locName}]: ${e?.message || e}`;
+        console.error(`[FullStory] ${msg}`, e);
         locations.push(created);
-        stats.skipped++;
+        stats.saveErrors.push(msg);
       }
     }
   }
@@ -889,9 +897,10 @@ export async function createEpisodesFromAnalysis(
         stats.created++;
         console.log(`[FullStory] 의상 신규 생성: ${ol.normalized_id}`);
       }
-    } catch (e) {
-      console.warn(`[FullStory] 의상 저장 실패: ${ol.normalized_id}`, e);
-      stats.skipped++;
+    } catch (e: any) {
+      const msg = `의상 저장 실패 [${ol.normalized_id}]: ${e?.message || e}`;
+      console.error(`[FullStory] ${msg}`, e);
+      stats.saveErrors.push(msg);
     }
   }
 
@@ -957,10 +966,11 @@ export async function createEpisodesFromAnalysis(
           console.warn(`[FullStory] ${ep.episode_number}화 Pipeline 스냅샷 저장 실패`, e);
         }
       }
-    } catch (e) {
-      console.warn(`[FullStory] ${ep.episode_number}화 저장 실패`, e);
+    } catch (e: any) {
+      const msg = `${ep.episode_number}화 저장 실패: ${e?.message || e}`;
+      console.error(`[FullStory] ${msg}`, e);
       createdEpisodes.push(episode);
-      stats.skipped++;
+      stats.saveErrors.push(msg);
     }
 
     await new Promise((r) => setTimeout(r, 50));
@@ -984,4 +994,6 @@ export interface UpsertStats {
   created: number;
   updated: number;
   skipped: number;
+  /** 실제 Firebase 저장 실패 목록 (에러 메시지) */
+  saveErrors: string[];
 }
