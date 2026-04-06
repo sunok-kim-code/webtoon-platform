@@ -256,6 +256,8 @@ export function ReferenceGallery() {
   const [bulkGenProgress, setBulkGenProgress] = useState<Record<string, string>>({});
   const [bulkGenImages, setBulkGenImages] = useState<Record<string, string>>({});
   const [bulkGenError, setBulkGenError] = useState<string | null>(null);
+  const [isRelinking, setIsRelinking] = useState(false);
+  const [relinkResult, setRelinkResult] = useState<string | null>(null);
 
   // ── 카테고리별 모델 선택 ──
   const [charModel, setCharModel] = useState(() => localStorage.getItem("KIE_CHAR_MODEL") || getSelectedImageModel());
@@ -681,6 +683,45 @@ export function ReferenceGallery() {
     setIsBulkGenOutfit(false);
   }, [kieReady, resolvedProjectId, artStyleKey, outfitModel, addOrUpdateOutfit]);
 
+  // ── 의상 캐릭터 연결 복구 (characterId="unknown" 인 의상을 이름 prefix 매칭으로 재연결) ──
+  const handleRelinkOutfits = useCallback(async () => {
+    setIsRelinking(true);
+    setRelinkResult(null);
+    const unknownOutfits = outfits.filter(o => o.characterId === "unknown" || !o.characterId);
+    let fixed = 0;
+    let failed = 0;
+    for (const outfit of unknownOutfits) {
+      // 캐릭터 이름 기반 longest-prefix 매칭
+      let bestChar: typeof characters[0] | undefined;
+      let bestMatchLen = 0;
+      for (const c of characters) {
+        const normalizedCName = c.name.toLowerCase().replace(/\s+/g, "_");
+        if (
+          outfit.id.toLowerCase().startsWith(normalizedCName + "_") ||
+          outfit.id.toLowerCase() === normalizedCName
+        ) {
+          if (normalizedCName.length > bestMatchLen) {
+            bestChar = c;
+            bestMatchLen = normalizedCName.length;
+          }
+        }
+      }
+      if (bestChar) {
+        const updated = { ...outfit, characterId: bestChar.id, characterName: bestChar.name, updatedAt: Date.now() };
+        try {
+          addOrUpdateOutfit(updated); // addOrUpdateOutfit stores + saves to Firebase internally
+          fixed++;
+        } catch {
+          failed++;
+        }
+      } else {
+        failed++;
+      }
+    }
+    setRelinkResult(`복구 완료: ${fixed}개 연결됨, ${failed}개 실패 (총 ${unknownOutfits.length}개 처리)`);
+    setIsRelinking(false);
+  }, [outfits, characters, addOrUpdateOutfit]);
+
   const handleCreateCharacter = async () => {
     if (!newCharData.name.trim()) { alert("캐릭터 이름을 입력하세요"); return; }
     if (!resolvedProjectId) { alert("프로젝트를 먼저 선택하세요"); return; }
@@ -1049,130 +1090,6 @@ export function ReferenceGallery() {
         </span>
       </div>
 
-      {/* ── 카테고리별 레퍼런스 일괄 생성 패널 ── */}
-      {kieReady && (() => {
-        const missingChars = characters.filter(c => c.references.length === 0);
-        const missingLocs = locations.filter(l => l.references.length === 0);
-        const missingOutfits = outfits.filter(o => o.references.length === 0);
-        const totalMissing = missingChars.length + missingLocs.length + missingOutfits.length;
-        const hasBulkActivity = Object.keys(bulkGenProgress).length > 0;
-        if (totalMissing === 0 && !hasBulkActivity) return null;
-        const text2imgModels = KIE_IMAGE_MODELS.filter(m => m.mode === "text2img");
-        const rowStyle: React.CSSProperties = { display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" };
-        const labelStyle: React.CSSProperties = { fontSize: 13, fontWeight: 600, color: "#374151", minWidth: 130, flexShrink: 0 };
-        const modelSelectStyle: React.CSSProperties = { fontSize: 12, padding: "4px 6px", borderRadius: 6, border: "1px solid #DDD6FE", background: "white", color: "#374151", flex: 1, minWidth: 120, maxWidth: 220 };
-        const genBtnStyle = (active: boolean): React.CSSProperties => ({
-          padding: "6px 14px", background: active ? "#9CA3AF" : "#7C3AED", color: "white",
-          border: "none", borderRadius: 7, fontWeight: 700, fontSize: 12,
-          cursor: active ? "not-allowed" : "pointer", flexShrink: 0, whiteSpace: "nowrap",
-        });
-        return (
-          <div style={{ background: "#F5F3FF", border: "1px solid #DDD6FE", borderRadius: 12, padding: "14px 18px", marginBottom: 16 }}>
-            <div style={{ fontWeight: 700, color: "#5B21B6", fontSize: 14, marginBottom: 10 }}>🚀 카테고리별 레퍼런스 생성</div>
-
-            {/* 캐릭터 행 */}
-            <div style={rowStyle}>
-              <span style={labelStyle}>👤 캐릭터 {missingChars.length}명 미생성</span>
-              <select value={charModel} onChange={e => handleCharModelChange(e.target.value)} style={modelSelectStyle}>
-                {text2imgModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </select>
-              {missingChars.length > 0 ? (
-                <button onClick={handleBulkGenerateChars} disabled={isBulkGenChar || isBulkGenLoc || isBulkGenOutfit} style={genBtnStyle(isBulkGenChar)}>
-                  {isBulkGenChar ? "⏳ 생성 중..." : `✨ 생성 (${missingChars.length}개)`}
-                </button>
-              ) : <span style={{ fontSize: 12, color: "#10B981" }}>✓ 완료</span>}
-            </div>
-
-            {/* 장소 행 */}
-            <div style={rowStyle}>
-              <span style={labelStyle}>📍 장소 {missingLocs.length}개 미생성</span>
-              <select value={locModel} onChange={e => handleLocModelChange(e.target.value)} style={modelSelectStyle}>
-                {text2imgModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </select>
-              {missingLocs.length > 0 ? (
-                <button onClick={handleBulkGenerateLocs} disabled={isBulkGenChar || isBulkGenLoc || isBulkGenOutfit} style={genBtnStyle(isBulkGenLoc)}>
-                  {isBulkGenLoc ? "⏳ 생성 중..." : `✨ 생성 (${missingLocs.length}개)`}
-                </button>
-              ) : <span style={{ fontSize: 12, color: "#10B981" }}>✓ 완료</span>}
-            </div>
-
-            {/* 의상 행 */}
-            <div style={{ ...rowStyle, marginBottom: 0 }}>
-              <span style={labelStyle}>👗 의상 {missingOutfits.length}개 미생성</span>
-              <select value={outfitModel} onChange={e => handleOutfitModelChange(e.target.value)} style={modelSelectStyle}>
-                {text2imgModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </select>
-              {missingOutfits.length > 0 ? (
-                <button onClick={handleBulkGenerateOutfits} disabled={isBulkGenChar || isBulkGenLoc || isBulkGenOutfit} style={genBtnStyle(isBulkGenOutfit)}>
-                  {isBulkGenOutfit ? "⏳ 생성 중..." : `✨ 생성 (${missingOutfits.length}개)`}
-                </button>
-              ) : <span style={{ fontSize: 12, color: "#10B981" }}>✓ 완료</span>}
-            </div>
-
-            {/* 진행 상황 */}
-            {hasBulkActivity && (
-              <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
-                {characters.filter(c => bulkGenProgress[`char_${c.id}`]).map(c => {
-                  const key = `char_${c.id}`;
-                  const prog = bulkGenProgress[key];
-                  const imgUrl = bulkGenImages[key] || c.references[0]?.storageUrl;
-                  return (
-                    <div key={key} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      {imgUrl ? (
-                        <img src={imgUrl} style={{ width: 38, height: 52, objectFit: "cover", borderRadius: 6, border: "1px solid #DDD6FE", flexShrink: 0 }} />
-                      ) : (
-                        <div style={{ width: 38, height: 52, background: "#EDE9FE", borderRadius: 6, flexShrink: 0 }} />
-                      )}
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: "#111" }}>👤 {c.name}</div>
-                        <div style={{ fontSize: 11, color: prog?.startsWith("✓") ? "#10B981" : prog?.startsWith("❌") ? "#EF4444" : "#7C3AED" }}>{prog}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-                {locations.filter(l => bulkGenProgress[`loc_${l.id}`]).map(l => {
-                  const key = `loc_${l.id}`;
-                  const prog = bulkGenProgress[key];
-                  const imgUrl = bulkGenImages[key] || l.references[0]?.storageUrl;
-                  return (
-                    <div key={key} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      {imgUrl ? (
-                        <img src={imgUrl} style={{ width: 38, height: 52, objectFit: "cover", borderRadius: 6, border: "1px solid #DDD6FE", flexShrink: 0 }} />
-                      ) : (
-                        <div style={{ width: 38, height: 52, background: "#EDE9FE", borderRadius: 6, flexShrink: 0 }} />
-                      )}
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: "#111" }}>📍 {l.name}</div>
-                        <div style={{ fontSize: 11, color: prog?.startsWith("✓") ? "#10B981" : prog?.startsWith("❌") ? "#EF4444" : "#7C3AED" }}>{prog}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-                {outfits.filter(o => bulkGenProgress[`outfit_${o.id}`]).map(o => {
-                  const key = `outfit_${o.id}`;
-                  const prog = bulkGenProgress[key];
-                  const imgUrl = bulkGenImages[key] || o.references[0]?.storageUrl;
-                  return (
-                    <div key={key} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      {imgUrl ? (
-                        <img src={imgUrl} style={{ width: 38, height: 52, objectFit: "cover", borderRadius: 6, border: "1px solid #DDD6FE", flexShrink: 0 }} />
-                      ) : (
-                        <div style={{ width: 38, height: 52, background: "#EDE9FE", borderRadius: 6, flexShrink: 0 }} />
-                      )}
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: "#111" }}>👗 {o.characterName} · {o.label}</div>
-                        <div style={{ fontSize: 11, color: prog?.startsWith("✓") ? "#10B981" : prog?.startsWith("❌") ? "#EF4444" : "#7C3AED" }}>{prog}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {bulkGenError && <div style={{ marginTop: 8, fontSize: 12, color: "#EF4444" }}>❌ {bulkGenError}</div>}
-          </div>
-        );
-      })()}
-
       {/* ═══════ 캐릭터 탭 ═══════ */}
       {activeTab === "characters" && (
         <div style={styles.tabContent}>
@@ -1193,6 +1110,50 @@ export function ReferenceGallery() {
             </div>
             <button onClick={() => setShowNewCharacterForm(true)} style={styles.newBtn}>+ 새 캐릭터</button>
           </div>
+
+          {/* ── 캐릭터 일괄 생성 ── */}
+          {kieReady && (() => {
+            const missingChars = characters.filter(c => c.references.length === 0);
+            const charProgress = characters.filter(c => bulkGenProgress[`char_${c.id}`]);
+            if (missingChars.length === 0 && charProgress.length === 0) return null;
+            return (
+              <div style={{ background: "#F5F3FF", border: "1px solid #DDD6FE", borderRadius: 10, padding: "10px 14px", marginBottom: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#5B21B6", flexShrink: 0 }}>✨ 일괄 생성</span>
+                  <select value={charModel} onChange={e => handleCharModelChange(e.target.value)}
+                    style={{ fontSize: 12, padding: "4px 6px", borderRadius: 6, border: "1px solid #DDD6FE", background: "white", color: "#374151", flex: 1, minWidth: 120, maxWidth: 200 }}>
+                    {KIE_IMAGE_MODELS.filter(m => m.mode === "text2img").map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                  {missingChars.length > 0 ? (
+                    <button onClick={handleBulkGenerateChars} disabled={isBulkGenChar || isBulkGenLoc || isBulkGenOutfit}
+                      style={{ padding: "5px 12px", background: isBulkGenChar ? "#9CA3AF" : "#7C3AED", color: "white", border: "none", borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: isBulkGenChar ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
+                      {isBulkGenChar ? "⏳ 생성 중..." : `캐릭터 ${missingChars.length}명 레퍼런스 생성`}
+                    </button>
+                  ) : <span style={{ fontSize: 12, color: "#10B981" }}>✓ 모두 완료</span>}
+                </div>
+                {charProgress.length > 0 && (
+                  <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 5 }}>
+                    {charProgress.map(c => {
+                      const key = `char_${c.id}`;
+                      const prog = bulkGenProgress[key];
+                      const imgUrl = bulkGenImages[key] || c.references[0]?.storageUrl;
+                      return (
+                        <div key={key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          {imgUrl ? <img src={imgUrl} style={{ width: 32, height: 44, objectFit: "cover", borderRadius: 5, border: "1px solid #DDD6FE" }} />
+                            : <div style={{ width: 32, height: 44, background: "#EDE9FE", borderRadius: 5 }} />}
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>{c.name}</div>
+                            <div style={{ fontSize: 11, color: prog?.startsWith("✓") ? "#10B981" : prog?.startsWith("❌") ? "#EF4444" : "#7C3AED" }}>{prog}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {bulkGenError && isBulkGenChar && <div style={{ marginTop: 6, fontSize: 11, color: "#EF4444" }}>❌ {bulkGenError}</div>}
+              </div>
+            );
+          })()}
 
           <div style={styles.refGrid}>
             {filteredCharacters.map((char) => {
@@ -1547,6 +1508,50 @@ export function ReferenceGallery() {
             <button onClick={() => setShowNewLocationForm(true)} style={styles.newBtn}>+ 새 장소</button>
           </div>
 
+          {/* ── 장소 일괄 생성 ── */}
+          {kieReady && (() => {
+            const missingLocs = locations.filter(l => l.references.length === 0);
+            const locProgress = locations.filter(l => bulkGenProgress[`loc_${l.id}`]);
+            if (missingLocs.length === 0 && locProgress.length === 0) return null;
+            return (
+              <div style={{ background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 10, padding: "10px 14px", marginBottom: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#166534", flexShrink: 0 }}>✨ 일괄 생성</span>
+                  <select value={locModel} onChange={e => handleLocModelChange(e.target.value)}
+                    style={{ fontSize: 12, padding: "4px 6px", borderRadius: 6, border: "1px solid #BBF7D0", background: "white", color: "#374151", flex: 1, minWidth: 120, maxWidth: 200 }}>
+                    {KIE_IMAGE_MODELS.filter(m => m.mode === "text2img").map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                  {missingLocs.length > 0 ? (
+                    <button onClick={handleBulkGenerateLocs} disabled={isBulkGenChar || isBulkGenLoc || isBulkGenOutfit}
+                      style={{ padding: "5px 12px", background: isBulkGenLoc ? "#9CA3AF" : "#16A34A", color: "white", border: "none", borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: isBulkGenLoc ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
+                      {isBulkGenLoc ? "⏳ 생성 중..." : `장소 ${missingLocs.length}개 레퍼런스 생성`}
+                    </button>
+                  ) : <span style={{ fontSize: 12, color: "#10B981" }}>✓ 모두 완료</span>}
+                </div>
+                {locProgress.length > 0 && (
+                  <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 5 }}>
+                    {locProgress.map(l => {
+                      const key = `loc_${l.id}`;
+                      const prog = bulkGenProgress[key];
+                      const imgUrl = bulkGenImages[key] || l.references[0]?.storageUrl;
+                      return (
+                        <div key={key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          {imgUrl ? <img src={imgUrl} style={{ width: 44, height: 32, objectFit: "cover", borderRadius: 5, border: "1px solid #BBF7D0" }} />
+                            : <div style={{ width: 44, height: 32, background: "#DCFCE7", borderRadius: 5 }} />}
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>{l.name}</div>
+                            <div style={{ fontSize: 11, color: prog?.startsWith("✓") ? "#10B981" : prog?.startsWith("❌") ? "#EF4444" : "#166534" }}>{prog}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {bulkGenError && isBulkGenLoc && <div style={{ marginTop: 6, fontSize: 11, color: "#EF4444" }}>❌ {bulkGenError}</div>}
+              </div>
+            );
+          })()}
+
           <div style={styles.refGrid}>
             {filteredLocations.map((loc) => (
               <div key={loc.id} style={styles.locationCard}>
@@ -1625,6 +1630,66 @@ export function ReferenceGallery() {
             </div>
             <button onClick={() => openOutfitLibAdd()} style={styles.newBtn}>+ 새 의상</button>
           </div>
+
+          {/* ── 의상 일괄 생성 + 캐릭터 연결 복구 ── */}
+          {kieReady && (() => {
+            const missingOutfits = outfits.filter(o => o.references.length === 0);
+            const outfitProgress = outfits.filter(o => bulkGenProgress[`outfit_${o.id}`]);
+            const unknownOutfits = outfits.filter(o => o.characterId === "unknown" || !o.characterId);
+            if (missingOutfits.length === 0 && outfitProgress.length === 0 && unknownOutfits.length === 0) return null;
+            return (
+              <div style={{ background: "#FFF7ED", border: "1px solid #FED7AA", borderRadius: 10, padding: "10px 14px", marginBottom: 12 }}>
+                {/* 일괄 생성 행 */}
+                {missingOutfits.length > 0 || outfitProgress.length > 0 ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: unknownOutfits.length > 0 ? 8 : 0 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#92400E", flexShrink: 0 }}>✨ 일괄 생성</span>
+                    <select value={outfitModel} onChange={e => handleOutfitModelChange(e.target.value)}
+                      style={{ fontSize: 12, padding: "4px 6px", borderRadius: 6, border: "1px solid #FED7AA", background: "white", color: "#374151", flex: 1, minWidth: 120, maxWidth: 200 }}>
+                      {KIE_IMAGE_MODELS.filter(m => m.mode === "text2img").map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                    {missingOutfits.length > 0 ? (
+                      <button onClick={handleBulkGenerateOutfits} disabled={isBulkGenChar || isBulkGenLoc || isBulkGenOutfit}
+                        style={{ padding: "5px 12px", background: isBulkGenOutfit ? "#9CA3AF" : "#D97706", color: "white", border: "none", borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: isBulkGenOutfit ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
+                        {isBulkGenOutfit ? "⏳ 생성 중..." : `의상 ${missingOutfits.length}개 레퍼런스 생성`}
+                      </button>
+                    ) : <span style={{ fontSize: 12, color: "#10B981" }}>✓ 모두 완료</span>}
+                  </div>
+                ) : null}
+                {/* 캐릭터 연결 복구 행 */}
+                {unknownOutfits.length > 0 && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", borderTop: (missingOutfits.length > 0 || outfitProgress.length > 0) ? "1px solid #FED7AA" : "none", paddingTop: (missingOutfits.length > 0 || outfitProgress.length > 0) ? 8 : 0 }}>
+                    <span style={{ fontSize: 12, color: "#92400E" }}>⚠️ 캐릭터 미연결 의상 {unknownOutfits.length}개</span>
+                    <button onClick={handleRelinkOutfits} disabled={isRelinking}
+                      style={{ padding: "5px 12px", background: isRelinking ? "#9CA3AF" : "#B45309", color: "white", border: "none", borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: isRelinking ? "not-allowed" : "pointer" }}>
+                      {isRelinking ? "⏳ 복구 중..." : "캐릭터 연결 복구"}
+                    </button>
+                    {relinkResult && <span style={{ fontSize: 11, color: "#166534" }}>✓ {relinkResult}</span>}
+                  </div>
+                )}
+                {/* 진행 상황 */}
+                {outfitProgress.length > 0 && (
+                  <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 5 }}>
+                    {outfitProgress.map(o => {
+                      const key = `outfit_${o.id}`;
+                      const prog = bulkGenProgress[key];
+                      const imgUrl = bulkGenImages[key] || o.references[0]?.storageUrl;
+                      return (
+                        <div key={key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          {imgUrl ? <img src={imgUrl} style={{ width: 32, height: 44, objectFit: "cover", borderRadius: 5, border: "1px solid #FED7AA" }} />
+                            : <div style={{ width: 32, height: 44, background: "#FEF3C7", borderRadius: 5 }} />}
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: "#111" }}>{o.characterName} · {o.label}</div>
+                            <div style={{ fontSize: 11, color: prog?.startsWith("✓") ? "#10B981" : prog?.startsWith("❌") ? "#EF4444" : "#92400E" }}>{prog}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {bulkGenError && isBulkGenOutfit && <div style={{ marginTop: 6, fontSize: 11, color: "#EF4444" }}>❌ {bulkGenError}</div>}
+              </div>
+            );
+          })()}
 
           {outfits.length === 0 ? (
             <div style={{ textAlign: "center", padding: "60px 20px", color: "#9ca3af" }}>

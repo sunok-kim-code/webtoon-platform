@@ -858,11 +858,55 @@ export async function createEpisodesFromAnalysis(
   report("creating_references", "의상 upsert 중...", 96);
 
   for (const ol of analysis.outfit_library) {
-    const matchedChar = analysis.character_bible.find(cb =>
-      ol.normalized_id.toLowerCase().startsWith(cb.name.toLowerCase().replace(/\s/g, "_"))
-    );
-    const charName = matchedChar?.name || ol.normalized_id.split("_")[0];
-    const charId = characters.find(c => c.name === charName)?.id || "unknown";
+    // 가장 긴 prefix 매칭으로 캐릭터 찾기 (예: "이세은_casual_summer" → "이세은")
+    // 단순 find() 대신 longest-match를 사용해 "이" vs "이세은" 같은 오매칭 방지
+    let matchedChar: FullStoryCharacter | undefined;
+    let longestMatchLen = 0;
+    for (const cb of analysis.character_bible) {
+      const normalizedCbName = cb.name.toLowerCase().replace(/\s+/g, "_");
+      if (
+        ol.normalized_id.toLowerCase().startsWith(normalizedCbName + "_") ||
+        ol.normalized_id.toLowerCase() === normalizedCbName
+      ) {
+        if (normalizedCbName.length > longestMatchLen) {
+          matchedChar = cb;
+          longestMatchLen = normalizedCbName.length;
+        }
+      }
+    }
+
+    let charName: string;
+    let charId: string;
+
+    if (matchedChar) {
+      charName = matchedChar.name;
+      charId = characters.find(c => c.name === charName)?.id || "unknown";
+    } else {
+      // character_bible 매칭 실패 시 → 로드된 characters 배열에서 직접 prefix 매칭 시도
+      let bestChar: typeof characters[0] | undefined;
+      let bestMatchLen = 0;
+      for (const c of characters) {
+        const normalizedCName = c.name.toLowerCase().replace(/\s+/g, "_");
+        if (
+          ol.normalized_id.toLowerCase().startsWith(normalizedCName + "_") ||
+          ol.normalized_id.toLowerCase() === normalizedCName
+        ) {
+          if (normalizedCName.length > bestMatchLen) {
+            bestChar = c;
+            bestMatchLen = normalizedCName.length;
+          }
+        }
+      }
+      if (bestChar) {
+        charName = bestChar.name;
+        charId = bestChar.id || "unknown";
+      } else {
+        // 최종 fallback: normalized_id 에서 한국어/영문 이름 추출 불가 → "unknown"
+        charName = ol.normalized_id.split("_")[0];
+        charId = "unknown";
+        console.warn(`[FullStory] 의상 캐릭터 매칭 실패: ${ol.normalized_id} → charId=unknown`);
+      }
+    }
 
     const existing = existingOutfitById.get(ol.normalized_id);
 
