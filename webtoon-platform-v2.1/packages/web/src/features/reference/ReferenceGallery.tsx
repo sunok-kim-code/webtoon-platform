@@ -297,6 +297,8 @@ export function ReferenceGallery() {
   };
 
   // ── 의상 단건 레퍼런스 생성 (OutfitEntry 기반) ──
+  // 캐릭터 기준 이미지(📌 핀 설정)를 img2img 소스로 사용.
+  // 핀 없으면 첫 번째 레퍼런스 이미지로 자동 fallback → 없으면 text2img.
   const handleGenerateSingleOutfit = useCallback(async (outfit: OutfitEntry, char: Character) => {
     if (!kieReady || !resolvedProjectId) return;
     const key = `outfit_${outfit.id}`;
@@ -305,12 +307,16 @@ export function ReferenceGallery() {
     const style = ART_STYLES[artStyleKey];
     const charBase = char.characterCore || char.defaultPromptSnippet || char.description || char.name;
     const prompt = `${style?.prefix || ""}full body character reference sheet, front view, clean background. ${charBase}, wearing ${outfit.description}. ${style?.charSuffix || "high quality, clean illustration"}`;
+
+    // img2img 소스: ① 핀된 기준 이미지 → ② 첫 번째 레퍼런스 이미지 → ③ 없으면 text2img
     let refImageUrls: string[] | undefined;
-    if (char.baseRefImageId) {
-      const baseRef = char.references.find(r => r.id === char.baseRefImageId);
-      if (baseRef?.storageUrl && !baseRef.storageUrl.startsWith("data:")) {
-        refImageUrls = [baseRef.storageUrl];
-      }
+    const candidateRefs = char.references.filter(r => !r.storageUrl.startsWith("data:"));
+    const pinnedRef = char.baseRefImageId
+      ? candidateRefs.find(r => r.id === char.baseRefImageId)
+      : undefined;
+    const bestRef = pinnedRef ?? candidateRefs[0];
+    if (bestRef) {
+      refImageUrls = [bestRef.storageUrl];
     }
     try {
       const result = await generateImage(prompt, {
@@ -646,16 +652,19 @@ export function ReferenceGallery() {
       if (matchedChar) {
         const charBase = matchedChar.characterCore || matchedChar.defaultPromptSnippet || matchedChar.description || matchedChar.name;
         prompt = `${style?.prefix || ""}full body character reference sheet, front view, clean background. ${charBase}, wearing ${outfit.description}. ${style?.charSuffix || "high quality, clean illustration"}`;
-        // 기준 외형 이미지가 있으면 img2img reference로 전달 (data URL 제외)
-        if (matchedChar.baseRefImageId) {
-          const baseRef = matchedChar.references.find(r => r.id === matchedChar.baseRefImageId);
-          if (baseRef && baseRef.storageUrl && !baseRef.storageUrl.startsWith("data:")) {
-            refImageUrls = [baseRef.storageUrl];
-          }
+        // img2img 소스: ① 핀된 기준 이미지 → ② 첫 번째 레퍼런스 이미지 → ③ 없으면 text2img
+        const candidateRefs = matchedChar.references.filter(r => !r.storageUrl.startsWith("data:"));
+        const pinnedRef = matchedChar.baseRefImageId
+          ? candidateRefs.find(r => r.id === matchedChar.baseRefImageId)
+          : undefined;
+        const bestRef = pinnedRef ?? candidateRefs[0];
+        if (bestRef) {
+          refImageUrls = [bestRef.storageUrl];
         }
       } else {
-        // Fallback to flat-lay if character not found
-        prompt = `${style?.prefix || ""}clothing reference sheet, flat-lay style, clean white background. ${outfit.description}. Detailed fabric texture, color, pattern. ${style?.charSuffix || "high quality, clean illustration"}`;
+        // 캐릭터를 찾지 못하면 해당 의상은 건너뜀 (flat-lay 오생성 방지)
+        setBulkGenProgress(p => ({ ...p, [key]: "❌ 연결된 캐릭터 없음 — 먼저 [캐릭터 연결 복구] 실행" }));
+        continue;
       }
       try {
         const result = await generateImage(prompt, {
@@ -1754,37 +1763,78 @@ export function ReferenceGallery() {
                       </div>
                     )}
 
-                    {/* 레퍼런스 이미지 */}
-                    {outfit.references && outfit.references.length > 0 ? (
-                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                        {outfit.references.map(ref => (
-                          <div key={ref.id}
-                            onClick={() => setLightbox({ url: ref.storageUrl, title: `${outfit.characterName} — ${outfit.label}` })}
-                            style={{ width: "72px", height: "72px", borderRadius: "6px", overflow: "hidden", cursor: "pointer", border: "1px solid #e5e7eb", flexShrink: 0 }}>
-                            <img src={ref.storageUrl} alt={outfit.label} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    {/* 레퍼런스 이미지 + 생성 버튼 */}
+                    {(() => {
+                      const matchedChar = characters.find(c => c.id === outfit.characterId);
+                      const oKey = `outfit_${outfit.id}`;
+                      const prog = bulkGenProgress[oKey];
+                      const isGenning = !!prog && !prog.startsWith("✓") && !prog.startsWith("❌");
+                      // 캐릭터 기준 이미지 (핀 → 첫 번째 → 없음)
+                      const charRefs = matchedChar?.references.filter(r => !r.storageUrl.startsWith("data:")) ?? [];
+                      const charBaseRef = matchedChar?.baseRefImageId
+                        ? charRefs.find(r => r.id === matchedChar.baseRefImageId) ?? charRefs[0]
+                        : charRefs[0];
+                      return (
+                        <>
+                          {/* 캐릭터 기준 이미지 + 화살표 + 의상 생성 이미지 */}
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                            {/* 캐릭터 기준 이미지 미리보기 */}
+                            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "2px" }}>
+                              <div style={{
+                                width: "54px", height: "72px", borderRadius: "6px", overflow: "hidden",
+                                border: charBaseRef ? "2px solid #f59e0b" : "1px dashed #d1d5db",
+                                background: "#f9fafb", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0
+                              }}>
+                                {charBaseRef
+                                  ? <img src={charBaseRef.storageUrl} alt={matchedChar?.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                  : <span style={{ fontSize: "18px" }}>👤</span>}
+                              </div>
+                              <span style={{ fontSize: "9px", color: charBaseRef ? "#92400E" : "#9ca3af", textAlign: "center", lineHeight: 1.2 }}>
+                                {charBaseRef ? (matchedChar?.baseRefImageId ? "기준" : "자동") : "이미지 없음"}
+                              </span>
+                            </div>
+                            <span style={{ fontSize: "16px", color: "#9ca3af" }}>+</span>
+                            {/* 의상 생성 결과 이미지들 */}
+                            {outfit.references && outfit.references.length > 0 ? (
+                              <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                                {outfit.references.map(ref => (
+                                  <div key={ref.id}
+                                    onClick={() => setLightbox({ url: ref.storageUrl, title: `${outfit.characterName} — ${outfit.label}` })}
+                                    style={{ width: "54px", height: "72px", borderRadius: "6px", overflow: "hidden", cursor: "pointer", border: "1px solid #e5e7eb", flexShrink: 0 }}>
+                                    <img src={ref.storageUrl} alt={outfit.label} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div style={{ width: "54px", height: "72px", borderRadius: "6px", border: "1px dashed #d1d5db", background: "#f9fafb", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                                <span style={{ fontSize: "18px" }}>👗</span>
+                              </div>
+                            )}
                           </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                        <span style={{ fontSize: "11px", color: "#9ca3af" }}>이미지 없음</span>
-                        {(() => {
-                          const matchedChar = characters.find(c => c.id === outfit.characterId);
-                          const oKey = `outfit_${outfit.id}`;
-                          const prog = bulkGenProgress[oKey];
-                          const isGenning = !!prog && !prog.startsWith("✓") && !prog.startsWith("❌");
-                          return matchedChar ? (
-                            <button
-                              onClick={() => handleGenerateSingleOutfit(outfit, matchedChar)}
-                              disabled={isGenning || !kieReady}
-                              style={{ fontSize: "10px", padding: "3px 8px", borderRadius: "5px", border: "none", cursor: "pointer", background: "#2563eb", color: "#fff", opacity: isGenning || !kieReady ? 0.5 : 1 }}
-                            >
-                              {isGenning ? (prog || "생성중…") : "생성"}
-                            </button>
-                          ) : null;
-                        })()}
-                      </div>
-                    )}
+                          {/* 생성 버튼 + 진행 상황 */}
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "2px" }}>
+                            {matchedChar ? (
+                              <>
+                                <button
+                                  onClick={() => handleGenerateSingleOutfit(outfit, matchedChar)}
+                                  disabled={isGenning || !kieReady}
+                                  style={{ fontSize: "11px", padding: "4px 10px", borderRadius: "6px", border: "none", cursor: isGenning || !kieReady ? "not-allowed" : "pointer", background: outfit.references?.length ? "#374151" : "#2563eb", color: "#fff", opacity: isGenning || !kieReady ? 0.5 : 1, whiteSpace: "nowrap" }}
+                                  title={charBaseRef ? `${matchedChar.name}의 기준 이미지를 사용해 생성` : `${matchedChar.name}의 레퍼런스 이미지가 없으면 텍스트로만 생성됩니다`}
+                                >
+                                  {isGenning ? "생성중…" : outfit.references?.length ? "재생성" : "캐릭터+의상 생성"}
+                                </button>
+                                {!charBaseRef && (
+                                  <span style={{ fontSize: "10px", color: "#f59e0b" }}>⚠️ 캐릭터탭에서 기준 이미지를 먼저 생성·핀해주세요</span>
+                                )}
+                              </>
+                            ) : (
+                              <span style={{ fontSize: "11px", color: "#ef4444" }}>⚠️ 캐릭터 미연결 — [캐릭터 연결 복구] 버튼 클릭</span>
+                            )}
+                            {prog && <span style={{ fontSize: "10px", color: prog.startsWith("✓") ? "#10B981" : prog.startsWith("❌") ? "#EF4444" : "#6b7280" }}>{prog}</span>}
+                          </div>
+                        </>
+                      );
+                    })()}
 
                     {/* 사용 횟수 */}
                     <div style={{ fontSize: "11px", color: "#6b7280" }}>사용 {outfit.usageCount}회</div>
