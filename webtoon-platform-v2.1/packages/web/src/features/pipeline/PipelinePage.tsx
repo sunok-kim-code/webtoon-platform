@@ -1385,7 +1385,7 @@ export function PipelinePage() {
         store.setLocations(updatedLocs);
         if (pid) {
           try {
-            await firebaseService.saveLocation(pid, updatedLoc);
+            await firebaseServicxe.saveLocation(pid, updatedLoc);
             console.log(`[SaveRef] Location reference saved to Firebase: ${selectedLocName} (${updatedLoc.references.length} refs)`);
           } catch (e) {
             console.error("[SaveRef] Firebase saveLocation error:", e);
@@ -1440,7 +1440,7 @@ export function PipelinePage() {
   // ── 프롬프트 재생성 ──
   const regeneratePrompt = (idx: number) => {
     const panel = editingPanels[idx];
-    if (!analysis) return;
+    if (!analysis) return; 
 
     const resolved = resolver.resolve({
       characters: panel.characters,
