@@ -1363,6 +1363,54 @@ export function PipelinePage() {
     }
   }, [preparePanelData, editingPanels, kieReady, analysis, episodeId, projectId, registeredChars, registeredLocs, registeredOutfits]);
 
+  // ── 패널 이미지 Firebase 재저장 ──
+  const [savingPanelIdx, setSavingPanelIdx] = useState<number | null>(null);
+  const savePanelImageToFirebase = useCallback(async (idx: number) => {
+    const imageUrl = generatedImages[idx];
+    if (!imageUrl) return;
+
+    setSavingPanelIdx(idx);
+    setGenProgress(prev => ({ ...prev, [idx]: "Firebase 저장 중..." }));
+
+    try {
+      const resp = await fetch(imageUrl);
+      if (!resp.ok) throw new Error(`이미지 로드 실패 (${resp.status})`);
+      const blob = await resp.blob();
+      const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/panels/panel_${idx}_${Date.now()}.png`;
+      const firebaseUrl = await uploadImage(storagePath, blob);
+
+      // blob URL이었으면 해제
+      if (imageUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(imageUrl);
+      }
+
+      setGeneratedImages(prev => ({ ...prev, [idx]: firebaseUrl }));
+      setGenProgress(prev => ({ ...prev, [idx]: "Firebase 저장 완료" }));
+      console.log(`[Panel ${idx}] Firebase 재저장 완료: ${firebaseUrl}`);
+    } catch (err: any) {
+      console.error(`[Panel ${idx}] Firebase 저장 실패:`, err);
+      setGenProgress(prev => ({ ...prev, [idx]: `저장 실패: ${err.message}` }));
+    } finally {
+      setSavingPanelIdx(null);
+    }
+  }, [generatedImages, projectId, episodeId]);
+
+  // ── 전체 패널 이미지 일괄 Firebase 저장 ──
+  const [isSavingAll, setIsSavingAll] = useState(false);
+  const saveAllPanelImages = useCallback(async () => {
+    const indices = Object.keys(generatedImages).map(Number).sort((a, b) => a - b);
+    if (indices.length === 0) return;
+
+    setIsSavingAll(true);
+    let saved = 0;
+    for (const idx of indices) {
+      await savePanelImageToFirebase(idx);
+      saved++;
+    }
+    setIsSavingAll(false);
+    console.log(`[Pipeline] 전체 ${saved}개 패널 이미지 Firebase 저장 완료`);
+  }, [generatedImages, savePanelImageToFirebase]);
+
   // ── 전체 패널 생성 (Vertex AI: BatchPredictionJob 50% 할인 / 기타: 순차) ──
   const generateAllPanels = useCallback(async () => {
     if (!kieReady) {
@@ -1908,6 +1956,15 @@ export function PipelinePage() {
                 >
                   {isGeneratingAll ? "생성 중..." : "전체 패널 이미지 생성"}
                 </button>
+                {Object.keys(generatedImages).length > 0 && (
+                  <button
+                    onClick={saveAllPanelImages}
+                    style={{ ...S.generateAllBtn, background: "#059669" }}
+                    disabled={isSavingAll || isGeneratingAll || generatingIndex !== null}
+                  >
+                    {isSavingAll ? "저장 중..." : "💾 전체 Firebase 저장"}
+                  </button>
+                )}
                 <button onClick={addPanel} style={S.addPanelBtn}>+ 패널 추가</button>
               </div>
             </div>
@@ -2296,6 +2353,16 @@ export function PipelinePage() {
                           >
                             📁
                           </button>
+                          {hasImage && (
+                            <button
+                              onClick={() => savePanelImageToFirebase(idx)}
+                              style={{ ...S.panelUploadBtn, fontSize: "11px", padding: "4px 8px" }}
+                              disabled={savingPanelIdx === idx || isGen || isGeneratingAll || isSavingAll}
+                              title="이 패널 이미지를 Firebase에 저장"
+                            >
+                              {savingPanelIdx === idx ? "저장 중..." : "💾 저장"}
+                            </button>
+                          )}
                           {hasImage && (
                             <button
                               onClick={() => openSaveRefModal(idx)}
