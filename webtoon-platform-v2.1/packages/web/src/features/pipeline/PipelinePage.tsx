@@ -71,7 +71,24 @@ function analyzeSceneLocally(sceneText: string): LocalAnalysis {
     "일찍","조용","갑자기","천천히","빠르","다시","함께",
     "다가","서로","혼자","나란히","한동안","옆자리","창가","맞은편",
   ]);
-  const allNames = [...new Set([...dialogueNames, ...subjectNames])].filter(n => n.length >= 2 && n.length <= 3 && !nameBlacklist.has(n));
+  let allNames = [...new Set([...dialogueNames, ...subjectNames])].filter(n => n.length >= 2 && n.length <= 3 && !nameBlacklist.has(n));
+
+  // 기존 갤러리 캐릭터 이름 우선 매칭 (성 제외, 이름만)
+  try {
+    const regCharNames = useReferenceStore.getState().characters.map(c => c.name);
+    if (regCharNames.length > 0) {
+      allNames = allNames.map(name => {
+        // 갤러리에 정확히 있으면 그대로
+        if (regCharNames.includes(name)) return name;
+        // 갤러리 이름이 분석 이름의 부분문자열 (성 제외 매칭)
+        const found = regCharNames.find(rn =>
+          name.endsWith(rn) || name.startsWith(rn) || rn.endsWith(name) || rn.startsWith(name)
+        );
+        return found || name;
+      });
+      allNames = [...new Set(allNames)];
+    }
+  } catch { /* store not available */ }
 
   const emotionMap: Record<string, string> = {
     "웃":"joy","미소":"joy","기쁨":"joy","밝":"joy",
@@ -721,10 +738,13 @@ export function PipelinePage() {
       let result: GeminiSceneAnalysis | LocalAnalysis;
 
       if (geminiReady) {
+        // 기존 의상 ID 목록을 Claude에게 전달하여 동일 의상 재사용
+        const existingOutfitIds = registeredOutfits.map(o => o.id);
         result = await analyzeSceneWithGemini(
           sceneText,
           registeredChars as Character[],
-          registeredLocs as Location[]
+          registeredLocs as Location[],
+          { existingOutfitIds }
         );
         setAnalysisMode("gemini");
       } else {
