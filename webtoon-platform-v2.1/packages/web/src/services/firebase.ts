@@ -1276,11 +1276,10 @@ export async function uploadImage(
   path: string,
   file: File | Blob
 ): Promise<string> {
-  const accessToken = localStorage.getItem("VERTEX_ACCESS_TOKEN") || "";
-
-  // ── GCS REST API (Vertex Access Token) ──
-  if (accessToken && accessToken.startsWith("ya29.")) {
-    try {
+  // ── GCS REST API (Vertex Access Token — 항상 우선 시도) ──
+  try {
+    const accessToken = await fetchFreshToken();
+    if (accessToken) {
       const cfg = getFirebaseConfig();
       const bucket = cfg?.storageBucket || "rhivclass.firebasestorage.app";
       const encodedPath = encodeURIComponent(path);
@@ -1305,9 +1304,9 @@ export async function uploadImage(
       const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodedPath}?alt=media`;
       console.log("[Firebase] Image uploaded via GCS REST:", path);
       return downloadUrl;
-    } catch (gcsErr) {
-      console.warn("[Firebase] GCS REST upload failed, trying Firebase SDK:", gcsErr);
     }
+  } catch (gcsErr) {
+    console.warn("[Firebase] GCS REST upload failed, trying Firebase SDK:", gcsErr);
   }
 
   // ── Firebase SDK fallback ──
