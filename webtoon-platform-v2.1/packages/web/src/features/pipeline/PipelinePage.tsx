@@ -189,103 +189,116 @@ function analyzeSceneLocally(sceneText: string): LocalAnalysis {
     characters.push({ name: "캐릭터1", description: "", emotion: primaryEmotion, outfit: "default", action: "standing", angle: "front", promptSnippet: "", dialogueSummary: null });
   }
 
-  // ── 1:1 씬→패널 매핑 (복잡한 장면만 분리) ──
-  // 줄 단위로 분리: 빈 줄은 장면 구분, 대사 줄은 직전 장면에 포함
+  // ── 씬 단위(#N) 패널 매핑 ──
+  // #N 마커가 있으면 씬 블록 단위, 없으면 줄 단위(하위 호환)
   const rawLines = sceneText.split("\n").map(l => l.trim()).filter(l => l.length > 0);
-  const scenes: string[] = [];
-  const dialoguePattern = /^[가-힣]{1,4}\s*[:：]/;
+  const dialoguePatternLocal = /^([가-힣a-zA-Z]{1,10})\s*[:：]\s*(?:\([^)]*\)\s*)?[""]?(.+?)[""]?\s*$/;
+  const sfxPatternLocal = /[(*]([가-힣a-zA-Z!?…]+(?:\s*[가-힣a-zA-Z!?…]+)*)[)*]/g;
 
-  for (const line of rawLines) {
-    if (dialoguePattern.test(line)) {
-      // 대사 줄 → 직전 장면에 병합
-      if (scenes.length > 0) {
-        scenes[scenes.length - 1] += "\n" + line;
+  // 대사/SFX 추출 헬퍼 (로컬 분석용)
+  const extractDialogueSfxLocal = (blockText: string) => {
+    const lines = blockText.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+    const visualLines: string[] = [];
+    const dialogues: Array<{ character: string; text: string }> = [];
+    const sfx: string[] = [];
+    for (const line of lines) {
+      const dlgMatch = line.match(dialoguePatternLocal);
+      if (dlgMatch) {
+        dialogues.push({ character: dlgMatch[1].trim(), text: dlgMatch[2].trim() });
+        continue;
+      }
+      let lineCopy = line;
+      let sfxMatch;
+      sfxPatternLocal.lastIndex = 0;
+      while ((sfxMatch = sfxPatternLocal.exec(line)) !== null) {
+        sfx.push(sfxMatch[1].trim());
+        lineCopy = lineCopy.replace(sfxMatch[0], "").trim();
+      }
+      if (lineCopy.length > 0) visualLines.push(lineCopy);
+    }
+    return { visualLines, dialogues, sfx };
+  };
+
+  // #N 마커 씬 블록 분리
+  const hasSceneMarkers = rawLines.some(l => /^#\d+/.test(l));
+  interface LocalSceneBlock { id: string; text: string; }
+  const sceneBlocks: LocalSceneBlock[] = [];
+
+  if (hasSceneMarkers) {
+    let currentBlock: LocalSceneBlock | null = null;
+    for (const line of rawLines) {
+      const markerMatch = line.match(/^#(\d+)\s*(.*)/);
+      if (markerMatch) {
+        if (currentBlock) sceneBlocks.push(currentBlock);
+        currentBlock = { id: `#${markerMatch[1]}`, text: markerMatch[2] || "" };
+      } else if (!line.startsWith("//")) {
+        if (currentBlock) {
+          currentBlock.text += (currentBlock.text ? "\n" : "") + line;
+        } else {
+          currentBlock = { id: "#0", text: line };
+        }
+      }
+    }
+    if (currentBlock) sceneBlocks.push(currentBlock);
+  } else {
+    // 폴백: 줄 단위 (대사는 직전 장면에 병합)
+    const scenes: string[] = [];
+    const dialogueTag = /^[가-힣]{1,4}\s*[:：]/;
+    for (const line of rawLines) {
+      if (dialogueTag.test(line)) {
+        if (scenes.length > 0) scenes[scenes.length - 1] += "\n" + line;
+        else scenes.push(line);
       } else {
         scenes.push(line);
       }
-    } else {
-      scenes.push(line);
     }
+    scenes.forEach((s, i) => sceneBlocks.push({ id: `line_${i}`, text: s }));
   }
 
   const cameraAngles = ["wide shot","medium shot","close-up","over shoulder","bird's eye","low angle"];
-  // 복잡한 장면 감지 키워드 (여러 동작이 이어지는 패턴)
-  const multiActionPatterns = [/며\s/, /고\s/, /면서\s/, /다가\s/, /후\s/];
 
   const panels: GeminiPanelSuggestion[] = [];
   let panelIdx = 0;
 
   // 씬 타입 판별 헬퍼
-  const classifyScene = (sceneText: string, chars: string[]): PanelType => {
-    const t = sceneText.trim();
-    // 캐릭터가 없고 짧으면 narration
+  const classifyScene = (scText: string, chars: string[]): PanelType => {
+    const t = scText.trim();
     if (chars.length === 0 && t.length < 80) return "narration";
-    // 대괄호/괄호로 시작하거나 "~는/이/가 생각하다" 형식 → narration
     if (/^[\[(「『]/.test(t)) return "narration";
-    // 대화 태그만 있고 50자 미만 → dialogue
     if (/^[가-힣]{2,4}\s*[:：]/.test(t) && t.length < 60) return "dialogue";
-    // 장소 전환 설명 (씬 헤더 텍스트) → skip
     if (/^(씬|scene|int\.|ext\.)\s/i.test(t) && chars.length === 0) return "skip";
-    // 캐릭터 없이 순수 설명 텍스트만 → narration
     if (chars.length === 0) return "narration";
-    // 기본: visual
     return "visual";
   };
 
-  for (const scene of scenes) {
-    if (scene.trim().length < 3) continue;
+  for (const block of sceneBlocks) {
+    if (block.text.trim().length < 3) continue;
 
-    // 여러 동작이 포함된 복잡한 장면인지 판별
-    const isComplex = multiActionPatterns.filter(p => p.test(scene)).length >= 2 && scene.length > 30;
-    const panelChars = allNames.filter(n => scene.includes(n));
+    const { visualLines, dialogues, sfx } = extractDialogueSfxLocal(block.text);
+    const visualText = visualLines.join(" ");
+    const panelChars = allNames.filter(n => block.text.includes(n));
     const chars = panelChars.length > 0 ? panelChars : allNames.slice(0, 2);
-    const panel_type = classifyScene(scene, panelChars);
+    const panel_type = visualLines.length === 0 && dialogues.length > 0
+      ? "dialogue" as PanelType
+      : classifyScene(visualText || block.text, panelChars);
 
-    if (isComplex && panel_type !== "narration" && panel_type !== "skip") {
-      // 복잡한 장면 → 2개 패널로 분리 (앞부분/뒷부분)
-      const midPoint = scene.indexOf(",", Math.floor(scene.length / 3));
-      const splitAt = midPoint > 0 ? midPoint + 1 : Math.floor(scene.length / 2);
-      const part1 = scene.slice(0, splitAt).trim();
-      const part2 = scene.slice(splitAt).trim();
+    // aiPrompt에 대사/SFX 제외, 순수 비주얼만
+    const promptText = visualText || block.text;
 
-      panels.push({
-        panelNumber: ++panelIdx,
-        description: part1,
-        characters: chars,
-        cameraAngle: cameraAngles[panelIdx % cameraAngles.length],
-        emotion: primaryEmotion,
-        composition: "",
-        aiPrompt: `webtoon panel. ${part1}.`,
-        notes: "자동 분리된 패널 (앞부분)",
-        panel_type,
-      });
-      if (part2.length > 5) {
-        panels.push({
-          panelNumber: ++panelIdx,
-          description: part2,
-          characters: chars,
-          cameraAngle: cameraAngles[panelIdx % cameraAngles.length],
-          emotion: primaryEmotion,
-          composition: "",
-          aiPrompt: `webtoon panel. ${part2}.`,
-          notes: "자동 분리된 패널 (뒷부분)",
-          panel_type,
-        });
-      }
-    } else {
-      // 일반 장면 → 1개 패널
-      panels.push({
-        panelNumber: ++panelIdx,
-        description: scene,
-        characters: chars,
-        cameraAngle: cameraAngles[panelIdx % cameraAngles.length],
-        emotion: primaryEmotion,
-        composition: "",
-        aiPrompt: `webtoon panel. ${scene}.`,
-        notes: "",
-        panel_type,
-      });
-    }
+    panels.push({
+      panelNumber: ++panelIdx,
+      description: block.text,
+      characters: chars,
+      cameraAngle: cameraAngles[panelIdx % cameraAngles.length],
+      emotion: primaryEmotion,
+      composition: visualText,
+      aiPrompt: `webtoon panel. ${promptText}.`,
+      notes: "",
+      panel_type,
+      sceneId: block.id,
+      dialogues: dialogues.length > 0 ? dialogues : undefined,
+      sfx: sfx.length > 0 ? sfx : undefined,
+    });
   }
 
   if (panels.length === 0) {
@@ -863,6 +876,12 @@ export function PipelinePage() {
       const latestChars = useReferenceStore.getState().characters;
       const latestOutfits = useReferenceStore.getState().outfits;
       const prompts: Record<number, string> = {};
+      // 연속성 추적용 변수
+      let prevAction = "";
+      let prevCharState = "";
+      let prevCameraAngle = "";
+      let prevSceneId = "";
+
       result.panels.forEach((panel, idx) => {
         // 캐릭터 토큰: 이름 + 감정 + 행동만 — 외형/의상 설명은 레퍼런스 이미지가 담당
         const charTokens = panel.characters
@@ -891,6 +910,9 @@ export function PipelinePage() {
           .join(", ");
         const locRef = `ref:location/${panelLocName.replace(/\s/g, "_")}`;
 
+        // 현재 패널의 씬 ID (씬 단위 분리에서 부여된 값)
+        const currentSceneId = (panel as any).sceneId || `scene_${idx}`;
+
         // 프롬프트: 씬 행동 + 캐릭터(이름+감정) + 장소(시간/분위기) + 카메라
         // 외형/의상 텍스트 설명 없음 — referenceImageUrls 의 이미지가 그 역할을 함
         const panelCtx: PanelPromptContext = {
@@ -904,8 +926,33 @@ export function PipelinePage() {
           refTags: outfitRefs ? `[${outfitRefs}, ${locRef}]` : `[${locRef}]`,
           characterCount: panel.characters.length,
           characterAngles: (panel as any).characterAngles,
+          // ── 연속성 필드 ──
+          prevAction: idx > 0 ? prevAction : undefined,
+          prevCharState: idx > 0 ? prevCharState : undefined,
+          prevCameraAngle: idx > 0 ? prevCameraAngle : undefined,
+          sceneId: currentSceneId,
+          prevSceneId: idx > 0 ? prevSceneId : undefined,
         };
         prompts[idx] = applyPromptRules(panelCtx);
+
+        // 다음 패널을 위해 현재 패널 정보 저장
+        const currentAction = panel.characters
+          .map(name => {
+            const c = result.characters.find(ch => ch.name === name);
+            return c ? `${name}: ${(c as any)?.action || "standing"}` : "";
+          })
+          .filter(Boolean)
+          .join(", ");
+        prevAction = currentAction || panel.description.slice(0, 60);
+        prevCharState = panel.characters
+          .map(name => {
+            const c = result.characters.find(ch => ch.name === name);
+            return c ? `${name}(${c.emotion}, ${(c as any)?.action || "standing"})` : "";
+          })
+          .filter(Boolean)
+          .join(", ");
+        prevCameraAngle = panel.cameraAngle;
+        prevSceneId = currentSceneId;
       });
       setPanelPrompts(prompts);
       setCurrentStep("step2_storyboard");

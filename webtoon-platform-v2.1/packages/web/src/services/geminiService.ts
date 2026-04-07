@@ -65,9 +65,12 @@ export interface GeminiPanelSuggestion {
   cameraAngle: string;
   emotion: string;
   composition: string;             // 구도 설명
-  aiPrompt: string;                // 완성된 AI 이미지 생성 프롬프트
+  aiPrompt: string;                // 완성된 AI 이미지 생성 프롬프트 (대사/SFX 제외)
   notes: string;
   panel_type?: PanelType;          // 씬 분류 (없으면 "visual" 로 간주)
+  sceneId?: string;                // 씬 단위 ID (예: "#1", "#2")
+  dialogues?: Array<{ character: string; text: string }>;  // 대사 (이미지 프롬프트에 포함 안 함)
+  sfx?: string[];                  // 효과음 (이미지 프롬프트에 포함 안 함)
 }
 
 export interface GeminiAutoTagResult {
@@ -589,54 +592,121 @@ function mapClaudeResultToGemini(
     accessories: c.outfit.accessories?.join(", ") || "none",
   }));
 
-  // 씬 텍스트 줄 → 자동 패널 생성
-  const sceneLines = sceneText
-    .split("\n")
-    .map(l => l.trim())
-    .filter(l => l.length > 0 && !l.startsWith("//") && !l.startsWith("#"));
-
+  // ── 씬 단위(#N) 분리 → 패널 생성 ──
+  // #N 마커가 있으면 씬 블록 단위로, 없으면 줄 단위 폴백
   const allCharNames = claude.characters.map(c => c.name);
-  const panels: GeminiPanelSuggestion[] = sceneLines.map((line, i) => {
-    // 해당 줄에 등장하는 캐릭터 감지
-    const lineChars = allCharNames.filter(n => line.includes(n));
+  const dialogueRe = /^([가-힣a-zA-Z]{1,10})\s*[:：]\s*(?:\([^)]*\)\s*)?[""]?(.+?)[""]?\s*$/;
+  const sfxRe = /[(*]([가-힣a-zA-Z!?…]+(?:\s*[가-힣a-zA-Z!?…]+)*)[)*]/g;
+
+  // 대사/SFX 추출 헬퍼
+  function extractDialogueAndSfx(text: string): {
+    visualLines: string[];
+    dialogues: Array<{ character: string; text: string }>;
+    sfx: string[];
+  } {
+    const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+    const visualLines: string[] = [];
+    const dialogues: Array<{ character: string; text: string }> = [];
+    const sfx: string[] = [];
+
+    for (const line of lines) {
+      const dlgMatch = line.match(dialogueRe);
+      if (dlgMatch) {
+        dialogues.push({ character: dlgMatch[1].trim(), text: dlgMatch[2].trim() });
+        continue;  // 대사는 이미지 프롬프트에서 제외
+      }
+      // SFX 추출 (괄호/별표로 감싸진 효과음)
+      let lineCopy = line;
+      let sfxMatch;
+      sfxRe.lastIndex = 0;
+      while ((sfxMatch = sfxRe.exec(line)) !== null) {
+        sfx.push(sfxMatch[1].trim());
+        lineCopy = lineCopy.replace(sfxMatch[0], "").trim();
+      }
+      if (lineCopy.length > 0) {
+        visualLines.push(lineCopy);
+      }
+    }
+    return { visualLines, dialogues, sfx };
+  }
+
+  // #N 마커로 씬 블록 분리
+  const rawLines = sceneText.split("\n");
+  const hasSceneMarkers = rawLines.some(l => /^#\d+/.test(l.trim()));
+  interface SceneBlock { id: string; text: string; }
+  const sceneBlocks: SceneBlock[] = [];
+
+  if (hasSceneMarkers) {
+    let currentBlock: SceneBlock | null = null;
+    for (const line of rawLines) {
+      const trimmed = line.trim();
+      const markerMatch = trimmed.match(/^#(\d+)\s*(.*)/);
+      if (markerMatch) {
+        if (currentBlock) sceneBlocks.push(currentBlock);
+        currentBlock = { id: `#${markerMatch[1]}`, text: markerMatch[2] || "" };
+      } else if (trimmed.length > 0 && !trimmed.startsWith("//")) {
+        if (currentBlock) {
+          currentBlock.text += (currentBlock.text ? "\n" : "") + trimmed;
+        } else {
+          currentBlock = { id: "#0", text: trimmed };
+        }
+      }
+    }
+    if (currentBlock) sceneBlocks.push(currentBlock);
+  } else {
+    // 폴백: 줄 단위 (기존 동작 유지)
+    const lines = rawLines
+      .map(l => l.trim())
+      .filter(l => l.length > 0 && !l.startsWith("//") && !l.startsWith("#"));
+    lines.forEach((line, i) => sceneBlocks.push({ id: `line_${i}`, text: line }));
+  }
+
+  const panels: GeminiPanelSuggestion[] = sceneBlocks.map((block, i) => {
+    const { visualLines, dialogues, sfx } = extractDialogueAndSfx(block.text);
+    const visualText = visualLines.join(" ");
+
+    // 해당 블록에 등장하는 캐릭터 감지
+    const blockChars = allCharNames.filter(n => block.text.includes(n));
     const charOutfits: Record<string, string> = {};
-    lineChars.forEach(n => {
+    blockChars.forEach(n => {
       const c = claude.characters.find(ch => ch.name === n);
       if (c) charOutfits[n] = c.outfit.normalized_id;
     });
 
-    // 첫 패널은 wide shot, 나머지는 medium shot 기본
+    // 첫 패널은 wide shot, 나머지는 medium shot
     const cameraAngle = i === 0 ? "wide shot" : "medium shot";
 
-    // 씬 타입 결정: 캐릭터 없으면 narration, 있으면 visual
-    const hasChars = lineChars.length > 0 || allCharNames.length > 0;
-    const isDialogueOnly = /["'"]\s*[가-힣]|[가-힣]\s*[:：]/.test(line);
+    // 씬 타입 결정
+    const hasChars = blockChars.length > 0 || allCharNames.length > 0;
     const panel_type: PanelType = !hasChars ? "narration"
-      : isDialogueOnly && line.length < 60 ? "dialogue"
+      : visualLines.length === 0 && dialogues.length > 0 ? "dialogue"
       : "visual";
 
-    // aiPrompt: 캐릭터 이름 + 감정 + 행동만. 외형/의상은 레퍼런스 이미지가 담당.
-    const charTokens = (lineChars.length > 0 ? lineChars : allCharNames)
+    // aiPrompt: 대사/SFX 제외, 순수 비주얼만
+    const charTokens = (blockChars.length > 0 ? blockChars : allCharNames)
       .map(n => {
         const c = claude.characters.find(ch => ch.name === n);
         return c ? `${n}(${c.expression || "neutral"}, ${c.pose || "standing"})` : n;
       })
       .join(", ");
-    const aiPrompt = `webtoon panel, ${cameraAngle}. ${locationName}. ${charTokens}. ${claude.time_of_day || "afternoon"} lighting.`;
+    const aiPrompt = `webtoon panel, ${cameraAngle}. ${locationName}. ${charTokens}. ${visualText || block.text}. ${claude.time_of_day || "afternoon"} lighting.`;
 
     return {
       panelNumber: i + 1,
-      description: line,
+      description: block.text,
       location: locationName,
       locationCanonical: claude.location.canonical_category,
-      characters: lineChars.length > 0 ? lineChars : allCharNames,
+      characters: blockChars.length > 0 ? blockChars : allCharNames,
       characterOutfits: charOutfits,
       cameraAngle,
       emotion: "neutral",
-      composition: line,
+      composition: visualText || block.text,
       aiPrompt,
       notes: "",
       panel_type,
+      sceneId: block.id,
+      dialogues: dialogues.length > 0 ? dialogues : undefined,
+      sfx: sfx.length > 0 ? sfx : undefined,
     };
   });
 

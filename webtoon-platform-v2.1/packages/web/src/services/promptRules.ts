@@ -22,7 +22,7 @@ export const PROMPT_RULES: PromptRule[] = [
     name: "No Redundancy",
     enabled: true,
     description:
-      "Composition 섹션에 Characters의 동작을 그대로 복사하지 않는다. Composition은 오직 카메라 앵글, 인물 배치, 렌즈 거리감에 집중한다.",
+      "Characters = 캐릭터 상태(감정, 포즈, 외형 변화)만 기술한다. Composition = 카메라/레이아웃(앵글, 인물 배치, 렌즈 거리감)만 기술한다. 두 섹션 간 내용 중복 금지.",
   },
   {
     id: "visual_narrative",
@@ -36,7 +36,7 @@ export const PROMPT_RULES: PromptRule[] = [
     name: "Lighting Details",
     enabled: true,
     description:
-      "조명은 단순히 '밝음'이 아니라 '실내 조명(Warm/Cool)'이나 '자연광'의 느낌을 구체적으로 서술한다.",
+      "조명은 단순히 '밝음/어둠'이 아니라 광원 유형(형광등, 자연광, 가로등 등)을 명시하고, '실내 Warm/Cool 조명', '창문 측면광' 등 구체적으로 서술한다.",
   },
   {
     id: "spatial_depth",
@@ -68,7 +68,7 @@ export const PROMPT_RULES: PromptRule[] = [
     name: "Emotion via Appearance",
     enabled: true,
     description:
-      "캐릭터의 감정을 표정뿐 아니라 외형 변화(머리카락 흩날림, 옷 주름, 손 떨림, 눈물 자국 등)로 시각화한다.",
+      "캐릭터의 감정을 추상적 감정 단어('슬픔', '기쁨')가 아닌 시각적 외형 변화로 기술한다. 예: 머리카락 흩날림, 옷 주름, 손 떨림, 눈물 자국, 주먹 꽉 쥠, 어깨 처짐 등.",
   },
   {
     id: "three_layer_composition",
@@ -106,6 +106,15 @@ export const PROMPT_RULES: PromptRule[] = [
     enabled: true,
     description:
       "같은 씬 내에서는 카메라 앵글의 일관성을 유지한다. 급격한 앵글 변화가 필요할 경우 명시적으로 전환 의도를 표기한다.",
+  },
+
+  // ── 레퍼런스 태그 강제 포함 ──
+  {
+    id: "ref_tags_in_characters",
+    name: "Ref Tags in Characters",
+    enabled: true,
+    description:
+      "Characters 섹션에 해당 캐릭터의 의상 레퍼런스 태그 [ref:outfit/...] 를 항상 포함한다. 뒷모습 캐릭터는 표정 대신 자세(posture)를 기술한다.",
   },
 ];
 
@@ -170,9 +179,18 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
     }
   }
 
-  // [emotion_appearance] 외형 변화로 감정 시각화
+  // [emotion_appearance] 외형 변화로 감정 시각화 (추상적 감정 단어 배제)
   if (ruleIds.has("emotion_appearance") && ctx.charTokens) {
-    charactersSection += " Visualize emotions through appearance changes (hair movement, clothing wrinkles, trembling hands, tear marks) beyond facial expressions.";
+    charactersSection += " Visualize emotions through visual appearance changes (hair movement, clothing wrinkles, trembling hands, tear marks, clenched fists, drooping shoulders) — never use abstract emotion words.";
+  }
+
+  // [ref_tags_in_characters] 캐릭터 의상 레퍼런스 태그 강제 삽입
+  if (ruleIds.has("ref_tags_in_characters") && ctx.refTags) {
+    // refTags에서 outfit 태그만 추출하여 Characters 섹션에 추가
+    const outfitTags = ctx.refTags.match(/ref:outfit\/[^\],\s]+/g);
+    if (outfitTags && outfitTags.length > 0) {
+      charactersSection += ` [${outfitTags.join(", ")}]`;
+    }
   }
 
   // ── Setting 섹션 ──
@@ -306,7 +324,7 @@ function buildLightingHint(timeLabel: string, moodLabel: string): string {
     timeLower === "낮" ||
     timeLower === "오후"
   ) {
-    lighting += " bright natural daylight";
+    lighting += " bright natural daylight, overhead sun as primary light source";
   } else if (
     timeLower.includes("evening") ||
     timeLower === "저녁" ||
@@ -318,16 +336,16 @@ function buildLightingHint(timeLabel: string, moodLabel: string): string {
     timeLower === "밤" ||
     timeLower === "야간"
   ) {
-    lighting += " cool ambient night lighting with artificial light sources";
+    lighting += " cool ambient night lighting, artificial light sources (streetlamps, neon, fluorescent)";
   } else {
     lighting += " natural ambient light";
   }
 
   // 분위기 기반 보정
   if (moodLower === "warm" || moodLower === "따뜻") {
-    lighting += ", warm interior glow";
+    lighting += ", warm interior glow (incandescent / pendant lamp)";
   } else if (moodLower === "cold" || moodLower === "차가운") {
-    lighting += ", cool blue-tinted light";
+    lighting += ", cool blue-tinted fluorescent light";
   } else if (moodLower === "tense" || moodLower === "긴장") {
     lighting += ", harsh directional light with deep shadows";
   } else if (moodLower === "dark" || moodLower === "어둠") {
