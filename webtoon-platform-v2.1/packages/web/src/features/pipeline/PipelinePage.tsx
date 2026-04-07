@@ -1,6 +1,5 @@
 // ============================================================
 // PipelinePage — 2단계 파이프라인
-// thumbnail patch
 
 // Step 1: 씬 설명 입력  
 // Step 2: 씬 분석 + 레퍼런스 이미지 생성 + 스토리보드(패널 이미지 통합)
@@ -1785,20 +1784,43 @@ export function PipelinePage() {
                         </div>
                         <div style={S.panelCharacters}>
                           <label style={S.smallLabel}>등장 캐릭터</label>
-                          <div style={S.charChips}>
+                          <div style={S.refThumbRow}>
                             {analysis.characters.map(char => {
                               const selected = panel.characters.includes(char.name);
+                              // 의상 레퍼런스 썸네일 찾기
+                              const outfitId = (panel as any).characterOutfits?.[char.name];
+                              const outfitEntry = outfitId ? registeredOutfits.find(o => o.id === outfitId) : undefined;
+                              const outfitThumb = outfitEntry?.references?.[0]?.storageUrl;
+                              // 캐릭터 기본 레퍼런스 (fallback)
+                              const charRefThumb = refImages[`char_${char.name}`];
+                              const thumbUrl = outfitThumb || charRefThumb;
+
                               return (
-                                <button
+                                <div
                                   key={char.name}
                                   onClick={() => {
                                     const chars = selected ? panel.characters.filter(c => c !== char.name) : [...panel.characters, char.name];
                                     updatePanel(idx, { characters: chars });
                                   }}
-                                  style={selected ? S.charChipActive : S.charChip}
+                                  style={{
+                                    ...S.refThumbItem,
+                                    borderColor: selected ? "#2563eb" : "#e5e7eb",
+                                    background: selected ? "#eff6ff" : "#fff",
+                                    cursor: "pointer",
+                                  }}
+                                  title={`${char.name}${outfitEntry ? ` — ${outfitEntry.label}` : ""}`}
                                 >
-                                  {char.name}
-                                </button>
+                                  {thumbUrl ? (
+                                    <img src={thumbUrl} alt={char.name} style={S.refThumbImg} />
+                                  ) : (
+                                    <div style={S.refThumbEmpty} onClick={e => { e.stopPropagation(); openSaveRefModal(idx); }}>
+                                      <span style={{ fontSize: "16px" }}>+</span>
+                                    </div>
+                                  )}
+                                  <span style={S.refThumbLabel}>
+                                    {outfitEntry ? outfitEntry.label : "의상"}
+                                  </span>
+                                </div>
                               );
                             })}
                           </div>
@@ -1856,19 +1878,81 @@ export function PipelinePage() {
                             </button>
                           )}
                         </div>
-                        {/* 레퍼런스 이미지 참조 표시 */}
-                        {(() => {
-                          const refCount: string[] = [];
-                          if (idx > 0 && generatedImages[idx - 1]) refCount.push("이전패널");
-                          if (idx > 1 && generatedImages[idx - 2]) refCount.push("2칸전");
-                          (panel?.characters || []).forEach((cn: string) => { if (refImages[`char_${cn}`]) refCount.push(cn); });
-                          if (analysis && refImages[`loc_${analysis.location.name}`]) refCount.push("배경");
-                          return refCount.length > 0 ? (
-                            <div style={{ fontSize: "11px", color: "#8b5cf6", marginTop: "4px" }}>
-                              📎 레퍼런스 {refCount.length}개: {refCount.join(", ")}
-                            </div>
-                          ) : null;
-                        })()}
+                        {/* 레퍼런스 썸네일 스트립 */}
+                        <div style={S.refStripWrap}>
+                          <label style={{ ...S.smallLabel, fontSize: "10px", marginBottom: "4px" }}>참조 레퍼런스</label>
+                          <div style={S.refStripRow}>
+                            {/* 이전 패널 */}
+                            {idx > 0 && (
+                              <div style={S.refStripItem} title="이전 패널">
+                                {generatedImages[idx - 1] ? (
+                                  <img
+                                    src={generatedImages[idx - 1]}
+                                    alt="이전 패널"
+                                    style={S.refStripImg}
+                                    onClick={() => openLightbox(generatedImages[idx - 1], `Panel ${idx}`)}
+                                  />
+                                ) : (
+                                  <div style={S.refStripEmpty}><span style={{ fontSize: "12px" }}>+</span></div>
+                                )}
+                                <span style={S.refStripLabel}>이전패널</span>
+                              </div>
+                            )}
+
+                            {/* 캐릭터 의상 레퍼런스 */}
+                            {(panel?.characters || []).map((cn: string) => {
+                              const outfitId = (panel as any).characterOutfits?.[cn];
+                              const outfitEntry = outfitId ? registeredOutfits.find(o => o.id === outfitId) : undefined;
+                              const outfitThumb = outfitEntry?.references?.[0]?.storageUrl;
+                              const charThumb = refImages[`char_${cn}`];
+                              const thumb = outfitThumb || charThumb;
+                              return (
+                                <div key={`costume_${cn}`} style={S.refStripItem} title={`${cn} 의상${outfitEntry ? `: ${outfitEntry.label}` : ""}`}>
+                                  {thumb ? (
+                                    <img src={thumb} alt={`${cn} 의상`} style={S.refStripImg} onClick={() => openLightbox(thumb, `${cn} 의상`)} />
+                                  ) : (
+                                    <div style={S.refStripEmpty} onClick={() => openSaveRefModal(idx)}>
+                                      <span style={{ fontSize: "12px" }}>+</span>
+                                    </div>
+                                  )}
+                                  <span style={S.refStripLabel}>{outfitEntry?.label || "의상"}</span>
+                                  {thumb && (
+                                    <button
+                                      onClick={e => { e.stopPropagation(); openSaveRefModal(idx); }}
+                                      style={S.refStripSwap}
+                                      title="교체"
+                                    >↻</button>
+                                  )}
+                                </div>
+                              );
+                            })}
+
+                            {/* 장소 레퍼런스 */}
+                            {(() => {
+                              const panelLocName = (panel as any)?.location || analysis?.location?.name;
+                              const locThumb = panelLocName ? (refImages[`loc_${panelLocName}`] || refImages[`loc_${analysis?.location?.name}`]) : undefined;
+                              return panelLocName ? (
+                                <div style={S.refStripItem} title={`장소: ${panelLocName}`}>
+                                  {locThumb ? (
+                                    <img src={locThumb} alt={panelLocName} style={S.refStripImg} onClick={() => openLightbox(locThumb, panelLocName)} />
+                                  ) : (
+                                    <div style={S.refStripEmpty} onClick={() => openSaveRefModal(idx)}>
+                                      <span style={{ fontSize: "12px" }}>+</span>
+                                    </div>
+                                  )}
+                                  <span style={S.refStripLabel}>장소</span>
+                                  {locThumb && (
+                                    <button
+                                      onClick={e => { e.stopPropagation(); openSaveRefModal(idx); }}
+                                      style={S.refStripSwap}
+                                      title="교체"
+                                    >↻</button>
+                                  )}
+                                </div>
+                              ) : null;
+                            })()}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2680,7 +2764,48 @@ const S = {
   } as const,
 
   // ── "레퍼런스 저장" 버튼 ──
-  saveRefBtn: {
+  // ── 캐릭터 의상 썸네일 그리드 ──
+  refThumbRow: { display: "flex", gap: "8px", flexWrap: "wrap" as const } as const,
+  refThumbItem: {
+    width: "56px", display: "flex", flexDirection: "column" as const,
+    alignItems: "center", gap: "2px", border: "2px solid #e5e7eb",
+    borderRadius: "8px", padding: "3px", transition: "border-color 0.15s",
+  } as const,
+  refThumbImg: { width: "48px", height: "48px", objectFit: "cover" as const, borderRadius: "6px" } as const,
+  refThumbEmpty: {
+    width: "48px", height: "48px", display: "flex", alignItems: "center", justifyContent: "center",
+    background: "#f3f4f6", borderRadius: "6px", color: "#9ca3af", cursor: "pointer", border: "1px dashed #d1d5db",
+  } as const,
+  refThumbLabel: {
+    fontSize: "9px", color: "#6b7280", textAlign: "center" as const,
+    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, maxWidth: "56px",
+  } as const,
+  // ── 레퍼런스 썸네일 스트립 ──
+  refStripWrap: { marginTop: "4px" } as const,
+  refStripRow: { display: "flex", gap: "6px", flexWrap: "wrap" as const } as const,
+  refStripItem: {
+    position: "relative" as const, width: "48px",
+    display: "flex", flexDirection: "column" as const, alignItems: "center", gap: "2px",
+  } as const,
+  refStripImg: {
+    width: "44px", height: "44px", objectFit: "cover" as const,
+    borderRadius: "6px", border: "1px solid #e5e7eb", cursor: "pointer",
+  } as const,
+  refStripEmpty: {
+    width: "44px", height: "44px", display: "flex", alignItems: "center", justifyContent: "center",
+    background: "#f3f4f6", borderRadius: "6px", color: "#9ca3af", cursor: "pointer", border: "1px dashed #d1d5db",
+  } as const,
+  refStripLabel: {
+    fontSize: "8px", color: "#9ca3af", textAlign: "center" as const,
+    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, maxWidth: "48px",
+  } as const,
+  refStripSwap: {
+    position: "absolute" as const, top: "-4px", right: "-4px",
+    width: "16px", height: "16px", borderRadius: "50%" , border: "1px solid #d1d5db",
+    background: "#fff", cursor: "pointer", fontSize: "10px", lineHeight: "14px",
+    textAlign: "center" as const, padding: 0, color: "#6b7280",
+  } as const,
+    saveRefBtn: {
     padding: "6px 10px", background: "#fef3c7", color: "#92400e",
     border: "1px solid #fbbf24", borderRadius: "6px", cursor: "pointer",
     fontSize: "11px", fontWeight: "600", whiteSpace: "nowrap",
