@@ -3,6 +3,8 @@
 // 통합 Market API — createTask + polling
 // ============================================================
 
+import { fetchFreshToken } from "./firebase";
+
 // ─── 모델 카탈로그 ──────────────────────────────────────────
 
 export type KieImageCategory = "recommended" | "google" | "seedream" | "flux" | "grok" | "gpt" | "ideogram" | "qwen" | "other";
@@ -487,10 +489,15 @@ async function callVertexGeminiImage(
 ): Promise<{ imageUrl: string }> {
   const projectId = localStorage.getItem("VERTEX_PROJECT_ID") || "";
   const location = localStorage.getItem("VERTEX_LOCATION") || "us-central1";
-  const accessToken = localStorage.getItem("VERTEX_ACCESS_TOKEN") || "";
 
-  if (!projectId || !accessToken) {
-    throw new Error("Vertex AI 설정이 필요합니다. VERTEX_PROJECT_ID와 VERTEX_ACCESS_TOKEN을 설정하세요.");
+  if (!projectId) {
+    throw new Error("Vertex AI 설정이 필요합니다. VERTEX_PROJECT_ID를 설정하세요.");
+  }
+
+  // 토큰을 fetchFreshToken으로 가져옴 (만료 임박 시 자동 갱신)
+  let accessToken = await fetchFreshToken();
+  if (!accessToken) {
+    throw new Error("Vertex AI 토큰이 없습니다. VERTEX_ACCESS_TOKEN을 설정하거나 /api/vertex-token 엔드포인트를 확인하세요.");
   }
 
   const modelName = "gemini-2.5-pro-preview-06-05";
@@ -499,7 +506,6 @@ async function callVertexGeminiImage(
   // 레퍼런스 이미지가 있으면 base64로 변환하여 multipart 요청
   const parts: any[] = [];
 
-  // 레퍼런스 이미지 추가 (최대 2개 — Vertex 제한 고려)
   if (referenceImageUrls && referenceImageUrls.length > 0) {
     const maxRefImages = Math.min(referenceImageUrls.length, 2);
     for (let i = 0; i < maxRefImages; i++) {
@@ -515,7 +521,6 @@ async function callVertexGeminiImage(
         console.warn(`[VertexImage] Failed to fetch ref image ${i}:`, e);
       }
     }
-    // 레퍼런스 포함 시 프롬프트에 지시 추가
     parts.push({
       text: `Use the above reference images as style and character reference. Generate a new image based on the following description:\n\n${prompt}`,
     });
@@ -523,60 +528,66 @@ async function callVertexGeminiImage(
     parts.push({ text: prompt });
   }
 
-  // 종횡비 → 픽셀 크기
-  const ar = toAspectRatioValue(sizeKey);
-  const aspectRatio = ar; // Vertex Gemini accepts aspect_ratio as string
-
   const body = {
     contents: [{ role: "user", parts }],
     generationConfig: {
       responseModalities: ["IMAGE", "TEXT"],
-      responseMimeType: "application/json",
-      // aspectRatio가 지원되면 추가
     },
   };
 
-  console.log(`[VertexImage] Calling Vertex AI: model=${modelName}, refs=${referenceImageUrls?.length || 0}, ar=${aspectRatio}`);
+  console.log(`[VertexImage] Calling Vertex AI: model=${modelName}, refs=${referenceImageUrls?.length || 0}`);
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify(body),
-  });
+  // 최대 1회 토큰 갱신 재시도
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(body),
+    });
 
-  if (response.status === 401) {
-    throw new Error("Vertex AI 토큰이 만료되었습니다 (401). VERTEX_ACCESS_TOKEN을 갱신하세요.");
-  }
+    if (response.status === 401 && attempt === 0) {
+      console.warn("[VertexImage] 401 — 토큰 갱신 시도 중...");
+      // 캐시 무효화 후 새 토큰 요청
+      localStorage.removeItem("VERTEX_ACCESS_TOKEN");
+      accessToken = await fetchFreshToken();
+      if (!accessToken || !accessToken.startsWith("ya29.")) {
+        throw new Error("Vertex AI 토큰 자동 갱신 실패. gcloud auth print-access-token으로 새 토큰을 발급받아 VERTEX_ACCESS_TOKEN에 설정하세요.");
+      }
+      console.log("[VertexImage] 토큰 갱신 성공, 재시도...");
+      continue;
+    }
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Vertex AI 오류 (${response.status}): ${errText.substring(0, 300)}`);
-  }
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Vertex AI 오류 (${response.status}): ${errText.substring(0, 300)}`);
+    }
 
-  const data = await response.json();
+    const data = await response.json();
 
-  // 응답에서 이미지 추출
-  const candidates = data.candidates || [];
-  for (const candidate of candidates) {
-    const candidateParts = candidate.content?.parts || [];
-    for (const part of candidateParts) {
-      if (part.inlineData?.mimeType?.startsWith("image/")) {
-        // base64 → Blob URL
-        const binaryStr = atob(part.inlineData.data);
-        const bytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
-        const blob = new Blob([bytes], { type: part.inlineData.mimeType });
-        const blobUrl = URL.createObjectURL(blob);
-        console.log(`[VertexImage] Image generated (${blob.size} bytes)`);
-        return { imageUrl: blobUrl };
+    // 응답에서 이미지 추출
+    const candidates = data.candidates || [];
+    for (const candidate of candidates) {
+      const candidateParts = candidate.content?.parts || [];
+      for (const part of candidateParts) {
+        if (part.inlineData?.mimeType?.startsWith("image/")) {
+          const binaryStr = atob(part.inlineData.data);
+          const bytes = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+          const blob = new Blob([bytes], { type: part.inlineData.mimeType });
+          const blobUrl = URL.createObjectURL(blob);
+          console.log(`[VertexImage] Image generated (${blob.size} bytes)`);
+          return { imageUrl: blobUrl };
+        }
       }
     }
+
+    throw new Error("Vertex AI: 응답에 이미지가 없습니다. 프롬프트를 수정해보세요.");
   }
 
-  throw new Error("Vertex AI: 응답에 이미지가 없습니다. 프롬프트를 수정해보세요.");
+  throw new Error("Vertex AI: 토큰 갱신 후에도 실패했습니다.");
 }
 
 /** Blob → base64 문자열 (data URI prefix 제거) */
