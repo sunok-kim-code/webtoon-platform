@@ -500,7 +500,7 @@ async function callVertexGeminiImage(
     throw new Error("Vertex AI 토큰이 없습니다. VERTEX_ACCESS_TOKEN을 설정하거나 /api/vertex-token 엔드포인트를 확인하세요.");
   }
 
-  const modelName = "gemini-3-pro-preview";
+  const modelName = "gemini-3-pro-image-preview";
   // gemini-3-pro-preview는 global 엔드포인트에서만 사용 가능
   const useGlobal = modelName.startsWith("gemini-3");
   const apiLocation = useGlobal ? "global" : location;
