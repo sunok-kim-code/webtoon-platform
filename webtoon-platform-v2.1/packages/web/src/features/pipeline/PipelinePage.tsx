@@ -1202,21 +1202,24 @@ export function PipelinePage() {
       }
     }
 
-    // ── 레퍼런스 이미지 URL 수집 ──
-    const referenceImageUrls: string[] = [];
-    const customRefs = panelCustomRefs[idx] || [];
-    for (const cUrl of customRefs) {
-      if (cUrl.startsWith("http") && !referenceImageUrls.includes(cUrl)) referenceImageUrls.push(cUrl);
-    }
+    // ── 레퍼런스 이미지 URL 수집 (이전 패널 최우선) ──
     const excluded = panelExcludedRefs[idx];
+    const prevPanelRefs: string[] = [];   // 이전 패널 (최우선)
+    const charOutfitRefs: string[] = [];  // 캐릭터/의상 ref
+    const customRefUrls: string[] = [];   // 커스텀 ref
+    const locationRefs: string[] = [];    // 장소 ref
+
+    // 1) 이전 패널 이미지 (가장 중요 — 스타일 연속성)
     if (idx > 0 && !excluded?.has("prev")) {
       const prevImg = generatedImages[idx - 1];
-      if (prevImg && prevImg.startsWith("http") && !referenceImageUrls.includes(prevImg)) referenceImageUrls.push(prevImg);
+      if (prevImg && prevImg.startsWith("http")) prevPanelRefs.push(prevImg);
       if (idx > 1) {
         const prev2Img = generatedImages[idx - 2];
-        if (prev2Img && prev2Img.startsWith("http") && !referenceImageUrls.includes(prev2Img)) referenceImageUrls.push(prev2Img);
+        if (prev2Img && prev2Img.startsWith("http")) prevPanelRefs.push(prev2Img);
       }
     }
+
+    // 2) 캐릭터/의상 레퍼런스
     if (analysis && panel) {
       for (const charName of panel.characters) {
         if (excluded?.has(`char_${charName}`)) continue;
@@ -1229,17 +1232,25 @@ export function PipelinePage() {
         }
         if (outfitEntry?.references?.length) {
           const best = [...outfitEntry.references].sort((a, b) => (b.quality || 0) - (a.quality || 0))[0];
-          if (best?.storageUrl?.startsWith("http") && !referenceImageUrls.includes(best.storageUrl)) {
-            referenceImageUrls.push(best.storageUrl);
+          if (best?.storageUrl?.startsWith("http") && !charOutfitRefs.includes(best.storageUrl)) {
+            charOutfitRefs.push(best.storageUrl);
             outfitRefAdded = true;
           }
         }
         if (!outfitRefAdded) {
           const charRefImg = refImages[`char_${charName}`];
-          if (charRefImg && charRefImg.startsWith("http") && !referenceImageUrls.includes(charRefImg)) referenceImageUrls.push(charRefImg);
+          if (charRefImg && charRefImg.startsWith("http") && !charOutfitRefs.includes(charRefImg)) charOutfitRefs.push(charRefImg);
         }
       }
     }
+
+    // 3) 커스텀 레퍼런스 (사용자 수동 선택)
+    const customRefs = panelCustomRefs[idx] || [];
+    for (const cUrl of customRefs) {
+      if (cUrl.startsWith("http") && !customRefUrls.includes(cUrl)) customRefUrls.push(cUrl);
+    }
+
+    // 4) 장소 레퍼런스
     if (analysis) {
       const panelLocName = panel?.location || analysis.location.name;
       if (!excluded?.has(`loc_${panelLocName}`)) {
@@ -1249,13 +1260,20 @@ export function PipelinePage() {
             || registeredLocs.find(l => l.name === analysis.location.name);
           locRefImg = (regLoc as any)?.references?.[0]?.storageUrl;
         }
-        if (locRefImg && locRefImg.startsWith("http") && !referenceImageUrls.includes(locRefImg)) referenceImageUrls.push(locRefImg);
+        if (locRefImg && locRefImg.startsWith("http")) locationRefs.push(locRefImg);
       }
     }
-    const finalRefUrls = referenceImageUrls.slice(0, 4);
+
+    // 우선순위: 이전 패널 → 캐릭터/의상 → 커스텀 → 장소 (중복 제거, 최대 4개)
+    const allRefs = [...prevPanelRefs, ...charOutfitRefs, ...customRefUrls, ...locationRefs];
+    const uniqueRefs: string[] = [];
+    for (const url of allRefs) {
+      if (!uniqueRefs.includes(url)) uniqueRefs.push(url);
+    }
+    const finalRefUrls = uniqueRefs.slice(0, 4);
 
     if (idx > 0 && generatedImages[idx - 1]) {
-      prompt += "\n\n[STYLE LOCK] Maintain IDENTICAL art style across all panels: same linework weight, color palette, shading technique, skin rendering, background detail level. Every panel must look like the same artist drew it in one session.";
+      prompt += "\n\n[STYLE LOCK — CRITICAL] You MUST maintain IDENTICAL art style, character appearance, and visual consistency with the previous panels provided as reference images. Specifically preserve: same linework weight and thickness, same color palette and saturation, same shading/lighting technique, same character face shape/proportions/hair style, same skin tone rendering, same background detail level. Every panel must look like the SAME ARTIST drew it in ONE SESSION. The reference images are from immediately preceding panels in the same comic — match them exactly.";
       prompt += "\nDo NOT render any text, letters, words, sound effects, onomatopoeia, or speech bubbles in the image.";
     }
 

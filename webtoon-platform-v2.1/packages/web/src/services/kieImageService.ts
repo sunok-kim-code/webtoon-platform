@@ -615,7 +615,7 @@ async function callVertexGeminiImage(
   const parts: any[] = [];
 
   if (referenceImageUrls && referenceImageUrls.length > 0) {
-    const maxRefImages = Math.min(referenceImageUrls.length, 2);
+    const maxRefImages = Math.min(referenceImageUrls.length, 4);
     for (let i = 0; i < maxRefImages; i++) {
       try {
         // fetch 방식 시도 → CORS 실패 시 img+canvas fallback
@@ -644,7 +644,7 @@ async function callVertexGeminiImage(
       }
     }
     parts.push({
-      text: `Use the above reference images as style and character reference. Generate a new image based on the following description:\n\n${prompt}`,
+      text: `[CRITICAL STYLE CONTINUITY] The above reference images are from PREVIOUS PANELS in the same webtoon/comic. You MUST exactly match: art style, linework, color palette, character face/body proportions, hair style, skin tone, shading technique, and background detail level. The new image must look like it was drawn by the SAME ARTIST in the SAME SESSION as the reference images.\n\nGenerate a new image based on the following description:\n\n${prompt}`,
     });
   } else {
     parts.push({ text: prompt });
