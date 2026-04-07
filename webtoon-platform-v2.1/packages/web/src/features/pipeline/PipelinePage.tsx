@@ -2865,9 +2865,11 @@ const S = {
   // ── 캐릭터 의상 썸네일 그리드 ──
   refThumbRow: { display: "flex", gap: "8px", flexWrap: "wrap" as const } as const,
   refThumbItem: {
+    position: "relative" as const,
     width: "56px", display: "flex", flexDirection: "column" as const,
     alignItems: "center", gap: "2px", border: "2px solid #e5e7eb",
     borderRadius: "8px", padding: "3px", transition: "border-color 0.15s",
+    overflow: "visible",
   } as const,
   refThumbImg: { width: "48px", height: "48px", objectFit: "cover" as const, borderRadius: "6px" } as const,
   refThumbEmpty: {
