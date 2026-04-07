@@ -1829,47 +1829,98 @@ export function PipelinePage() {
                             </select>
                           </div>
                         </div>
+                        {/* 참조 레퍼런스 (의상 + 장소 + 이전 패널) */}
                         <div style={S.panelCharacters}>
-                          <label style={S.smallLabel}>등장 캐릭터</label>
+                          <label style={S.smallLabel}>참조 레퍼런스</label>
                           <div style={S.refThumbRow}>
-                            {analysis.characters.map(char => {
-                              const selected = panel.characters.includes(char.name);
-                              // 의상 레퍼런스 썸네일 찾기
-                              const outfitId = (panel as any).characterOutfits?.[char.name];
+                            {/* 이전 패널 */}
+                            {idx > 0 && (
+                              <div
+                                style={{
+                                  ...S.refThumbItem,
+                                  borderColor: generatedImages[idx - 1] ? "#2563eb" : "#e5e7eb",
+                                  background: generatedImages[idx - 1] ? "#eff6ff" : "#fff",
+                                }}
+                                title="이전 패널"
+                              >
+                                {generatedImages[idx - 1] ? (
+                                  <img src={generatedImages[idx - 1]} alt="이전 패널" style={S.refThumbImg} onClick={() => openLightbox(generatedImages[idx - 1], `Panel ${idx}`)} />
+                                ) : (
+                                  <div style={S.refThumbEmpty}><span style={{ fontSize: "16px" }}>+</span></div>
+                                )}
+                                <span style={S.refThumbLabel}>이전패널</span>
+                              </div>
+                            )}
+                            {/* 캐릭터 의상 레퍼런스 — ref:outfit/... 태그로 표시 */}
+                            {(panel?.characters || []).map((cn: string) => {
+                              const outfitId = (panel as any).characterOutfits?.[cn];
                               const outfitEntry = outfitId ? registeredOutfits.find(o => o.id === outfitId) : undefined;
                               const outfitThumb = outfitEntry?.references?.[0]?.storageUrl;
-                              // 캐릭터 기본 레퍼런스 (fallback)
-                              const charRefThumb = refImages[`char_${char.name}`];
-                              const thumbUrl = outfitThumb || charRefThumb;
-
+                              const charThumb = refImages[`char_${cn}`];
+                              const thumb = outfitThumb || charThumb;
+                              const refTag = outfitId ? `ref:outfit/${outfitId}` : `ref:outfit/${cn}`;
                               return (
                                 <div
-                                  key={char.name}
-                                  onClick={() => {
-                                    const chars = selected ? panel.characters.filter(c => c !== char.name) : [...panel.characters, char.name];
-                                    updatePanel(idx, { characters: chars });
-                                  }}
+                                  key={`ref_outfit_${cn}`}
                                   style={{
                                     ...S.refThumbItem,
-                                    borderColor: selected ? "#2563eb" : "#e5e7eb",
-                                    background: selected ? "#eff6ff" : "#fff",
-                                    cursor: "pointer",
+                                    borderColor: thumb ? "#2563eb" : "#e5e7eb",
+                                    background: thumb ? "#eff6ff" : "#fff",
                                   }}
-                                  title={`${char.name}${outfitEntry ? ` — ${outfitEntry.label}` : ""}`}
+                                  title={refTag}
                                 >
-                                  {thumbUrl ? (
-                                    <img src={thumbUrl} alt={char.name} style={S.refThumbImg} />
+                                  {thumb ? (
+                                    <img src={thumb} alt={refTag} style={S.refThumbImg} onClick={() => openLightbox(thumb, refTag)} />
                                   ) : (
-                                    <div style={S.refThumbEmpty} onClick={e => { e.stopPropagation(); openSaveRefModal(idx); }}>
+                                    <div style={S.refThumbEmpty} onClick={() => openSaveRefModal(idx)}>
                                       <span style={{ fontSize: "16px" }}>+</span>
                                     </div>
                                   )}
-                                  <span style={S.refThumbLabel}>
-                                    {outfitEntry ? outfitEntry.label : "의상"}
+                                  <span style={S.refThumbLabel} title={refTag}>
+                                    {outfitEntry?.label || cn}
                                   </span>
+                                  {thumb && (
+                                    <button
+                                      onClick={e => { e.stopPropagation(); openSaveRefModal(idx); }}
+                                      style={S.refStripSwap}
+                                      title="교체"
+                                    >↻</button>
+                                  )}
                                 </div>
                               );
                             })}
+                            {/* 장소 레퍼런스 — ref:location/... 태그로 표시 */}
+                            {(() => {
+                              const panelLocName = (panel as any)?.location || analysis?.location?.name;
+                              const locThumb = panelLocName ? (refImages[`loc_${panelLocName}`] || refImages[`loc_${analysis?.location?.name}`]) : undefined;
+                              const refLocTag = panelLocName ? `ref:location/${panelLocName.replace(/\s/g, "_")}` : "";
+                              return panelLocName ? (
+                                <div
+                                  style={{
+                                    ...S.refThumbItem,
+                                    borderColor: locThumb ? "#2563eb" : "#e5e7eb",
+                                    background: locThumb ? "#eff6ff" : "#fff",
+                                  }}
+                                  title={refLocTag}
+                                >
+                                  {locThumb ? (
+                                    <img src={locThumb} alt={refLocTag} style={S.refThumbImg} onClick={() => openLightbox(locThumb, panelLocName)} />
+                                  ) : (
+                                    <div style={S.refThumbEmpty} onClick={() => openSaveRefModal(idx)}>
+                                      <span style={{ fontSize: "16px" }}>+</span>
+                                    </div>
+                                  )}
+                                  <span style={S.refThumbLabel} title={refLocTag}>장소</span>
+                                  {locThumb && (
+                                    <button
+                                      onClick={e => { e.stopPropagation(); openSaveRefModal(idx); }}
+                                      style={S.refStripSwap}
+                                      title="교체"
+                                    >↻</button>
+                                  )}
+                                </div>
+                              ) : null;
+                            })()}
                           </div>
                         </div>
 
@@ -1925,81 +1976,7 @@ export function PipelinePage() {
                             </button>
                           )}
                         </div>
-                        {/* 레퍼런스 썸네일 스트립 */}
-                        <div style={S.refStripWrap}>
-                          <label style={{ ...S.smallLabel, fontSize: "10px", marginBottom: "4px" }}>참조 레퍼런스</label>
-                          <div style={S.refStripRow}>
-                            {/* 이전 패널 */}
-                            {idx > 0 && (
-                              <div style={S.refStripItem} title="이전 패널">
-                                {generatedImages[idx - 1] ? (
-                                  <img
-                                    src={generatedImages[idx - 1]}
-                                    alt="이전 패널"
-                                    style={S.refStripImg}
-                                    onClick={() => openLightbox(generatedImages[idx - 1], `Panel ${idx}`)}
-                                  />
-                                ) : (
-                                  <div style={S.refStripEmpty}><span style={{ fontSize: "12px" }}>+</span></div>
-                                )}
-                                <span style={S.refStripLabel}>이전패널</span>
-                              </div>
-                            )}
-
-                            {/* 캐릭터 의상 레퍼런스 */}
-                            {(panel?.characters || []).map((cn: string) => {
-                              const outfitId = (panel as any).characterOutfits?.[cn];
-                              const outfitEntry = outfitId ? registeredOutfits.find(o => o.id === outfitId) : undefined;
-                              const outfitThumb = outfitEntry?.references?.[0]?.storageUrl;
-                              const charThumb = refImages[`char_${cn}`];
-                              const thumb = outfitThumb || charThumb;
-                              return (
-                                <div key={`costume_${cn}`} style={S.refStripItem} title={`${cn} 의상${outfitEntry ? `: ${outfitEntry.label}` : ""}`}>
-                                  {thumb ? (
-                                    <img src={thumb} alt={`${cn} 의상`} style={S.refStripImg} onClick={() => openLightbox(thumb, `${cn} 의상`)} />
-                                  ) : (
-                                    <div style={S.refStripEmpty} onClick={() => openSaveRefModal(idx)}>
-                                      <span style={{ fontSize: "12px" }}>+</span>
-                                    </div>
-                                  )}
-                                  <span style={S.refStripLabel}>{outfitEntry?.label || "의상"}</span>
-                                  {thumb && (
-                                    <button
-                                      onClick={e => { e.stopPropagation(); openSaveRefModal(idx); }}
-                                      style={S.refStripSwap}
-                                      title="교체"
-                                    >↻</button>
-                                  )}
-                                </div>
-                              );
-                            })}
-
-                            {/* 장소 레퍼런스 */}
-                            {(() => {
-                              const panelLocName = (panel as any)?.location || analysis?.location?.name;
-                              const locThumb = panelLocName ? (refImages[`loc_${panelLocName}`] || refImages[`loc_${analysis?.location?.name}`]) : undefined;
-                              return panelLocName ? (
-                                <div style={S.refStripItem} title={`장소: ${panelLocName}`}>
-                                  {locThumb ? (
-                                    <img src={locThumb} alt={panelLocName} style={S.refStripImg} onClick={() => openLightbox(locThumb, panelLocName)} />
-                                  ) : (
-                                    <div style={S.refStripEmpty} onClick={() => openSaveRefModal(idx)}>
-                                      <span style={{ fontSize: "12px" }}>+</span>
-                                    </div>
-                                  )}
-                                  <span style={S.refStripLabel}>장소</span>
-                                  {locThumb && (
-                                    <button
-                                      onClick={e => { e.stopPropagation(); openSaveRefModal(idx); }}
-                                      style={S.refStripSwap}
-                                      title="교체"
-                                    >↻</button>
-                                  )}
-                                </div>
-                              ) : null;
-                            })()}
-                          </div>
-                        </div>
+                        {/* 레퍼런스 스트립 — 왼쪽 참조 레퍼런스로 이동됨 */}
                       </div>
                     </div>
                   </div>
