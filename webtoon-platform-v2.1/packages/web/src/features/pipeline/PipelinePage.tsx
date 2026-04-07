@@ -187,6 +187,10 @@ export function PipelinePage() {
   const customRefFileInput = useRef<HTMLInputElement | null>(null);
   const customRefTargetPanel = useRef<number>(-1);
 
+  // 패널별 제외된 레퍼런스 키 (캐릭터/의상/장소/이전패널을 선택 해제)
+  // 키 형식: "char_이름", "loc_이름", "prev" (이전 패널)
+  const [panelExcludedRefs, setPanelExcludedRefs] = useState<Record<number, Set<string>>>({});
+
   // v1.0 말풍선/나래이션/효과음 데이터 (마이그레이션 시 보존)
   const [v1BubblesByPanel, setV1BubblesByPanel] = useState<Record<number, any[]>>({});
   const [v1PageSize, setV1PageSize] = useState<{ w: number; h: number }>({ w: 800, h: 1067 });
@@ -975,6 +979,27 @@ export function PipelinePage() {
     });
   }, []);
 
+  // 레퍼런스 제외 토글 (캐릭터/의상/장소/이전패널)
+  const toggleExcludeRef = useCallback((panelIdx: number, refKey: string) => {
+    setPanelExcludedRefs(prev => {
+      const existing = new Set(prev[panelIdx] || []);
+      if (existing.has(refKey)) {
+        existing.delete(refKey);
+      } else {
+        existing.add(refKey);
+      }
+      if (existing.size === 0) {
+        const { [panelIdx]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [panelIdx]: existing };
+    });
+  }, []);
+
+  const isRefExcluded = useCallback((panelIdx: number, refKey: string): boolean => {
+    return panelExcludedRefs[panelIdx]?.has(refKey) ?? false;
+  }, [panelExcludedRefs]);
+
   // ── 단일 패널 이미지 생성 (Reference Resolver + Context Chain 연동) ──
   const generatePanelImage = useCallback(async (idx: number) => {
     if (!kieReady) {
@@ -1041,8 +1066,9 @@ export function PipelinePage() {
       }
     }
 
-    // 1) 이전 패널 이미지 (시각적 일관성 — 커스텀과 중복 제외)
-    if (idx > 0) {
+    // 1) 이전 패널 이미지 (시각적 일관성 — 커스텀과 중복 제외, 제외된 레퍼런스 스킵)
+    const excluded = panelExcludedRefs[idx];
+    if (idx > 0 && !excluded?.has("prev")) {
       const prevImg = generatedImages[idx - 1];
       if (prevImg && prevImg.startsWith("http") && !referenceImageUrls.includes(prevImg)) {
         referenceImageUrls.push(prevImg);
@@ -1055,9 +1081,10 @@ export function PipelinePage() {
       }
     }
 
-    // 2) 캐릭터 의상 레퍼런스 이미지
+    // 2) 캐릭터 의상 레퍼런스 이미지 (제외된 레퍼런스 스킵)
     if (analysis && panel) {
       for (const charName of panel.characters) {
+        if (excluded?.has(`char_${charName}`)) continue;
         let outfitRefAdded = false;
 
         // 2a) panel.characterOutfits에서 정확 매칭
@@ -1090,20 +1117,22 @@ export function PipelinePage() {
       }
     }
 
-    // 3) 장소 레퍼런스 이미지 (파이프라인 생성 → 갤러리 fallback)
+    // 3) 장소 레퍼런스 이미지 (파이프라인 생성 → 갤러리 fallback, 제외된 레퍼런스 스킵)
     if (analysis) {
       const panelLocName = panel?.location || analysis.location.name;
-      let locRefImg = refImages[`loc_${panelLocName}`] || refImages[`loc_${analysis.location.name}`];
+      if (!excluded?.has(`loc_${panelLocName}`)) {
+        let locRefImg = refImages[`loc_${panelLocName}`] || refImages[`loc_${analysis.location.name}`];
 
-      // 갤러리에 등록된 장소 레퍼런스 fallback
-      if (!locRefImg) {
-        const regLoc = registeredLocs.find(l => l.name === panelLocName)
-          || registeredLocs.find(l => l.name === analysis.location.name);
-        locRefImg = (regLoc as any)?.references?.[0]?.storageUrl;
-      }
+        // 갤러리에 등록된 장소 레퍼런스 fallback
+        if (!locRefImg) {
+          const regLoc = registeredLocs.find(l => l.name === panelLocName)
+            || registeredLocs.find(l => l.name === analysis.location.name);
+          locRefImg = (regLoc as any)?.references?.[0]?.storageUrl;
+        }
 
-      if (locRefImg && locRefImg.startsWith("http") && !referenceImageUrls.includes(locRefImg)) {
-        referenceImageUrls.push(locRefImg);
+        if (locRefImg && locRefImg.startsWith("http") && !referenceImageUrls.includes(locRefImg)) {
+          referenceImageUrls.push(locRefImg);
+        }
       }
     }
 
@@ -1170,7 +1199,7 @@ export function PipelinePage() {
     } finally {
       setGeneratingIndex(null);
     }
-  }, [panelPrompts, editingPanels, kieReady, analysis, episodeId, projectId, registeredChars, registeredLocs, registeredOutfits, generatedImages, refImages, artStyleKey, panelCustomRefs]);
+  }, [panelPrompts, editingPanels, kieReady, analysis, episodeId, projectId, registeredChars, registeredLocs, registeredOutfits, generatedImages, refImages, artStyleKey, panelCustomRefs, panelExcludedRefs]);
 
   // ── 전체 패널 순차 생성 ──
   const generateAllPanels = useCallback(async () => {
@@ -1679,6 +1708,7 @@ export function PipelinePage() {
                                   ...S.refThumbItem,
                                   borderColor: generatedImages[idx - 1] ? "#2563eb" : "#e5e7eb",
                                   background: generatedImages[idx - 1] ? "#eff6ff" : "#fff",
+                                  opacity: isRefExcluded(idx, "prev") ? 0.35 : 1,
                                 }}
                                 title="이전 패널"
                               >
@@ -1688,6 +1718,13 @@ export function PipelinePage() {
                                   <div style={S.refThumbEmpty}><span style={{ fontSize: "16px" }}>+</span></div>
                                 )}
                                 <span style={S.refThumbLabel}>이전패널</span>
+                                {generatedImages[idx - 1] && (
+                                  <button
+                                    onClick={e => { e.stopPropagation(); toggleExcludeRef(idx, "prev"); }}
+                                    style={{ ...S.refStripSwap, color: isRefExcluded(idx, "prev") ? "#2563EB" : "#EF4444" }}
+                                    title={isRefExcluded(idx, "prev") ? "다시 포함" : "제외"}
+                                  >{isRefExcluded(idx, "prev") ? "↩" : "✕"}</button>
+                                )}
                               </div>
                             )}
                             {/* 캐릭터 의상 레퍼런스 — ref:outfit/... 태그로 표시 */}
@@ -1704,6 +1741,7 @@ export function PipelinePage() {
                               const charThumb = refImages[`char_${cn}`];
                               const thumb = outfitThumb || charThumb;
                               const refTag = outfitId ? `ref:outfit/${outfitId}` : `ref:outfit/${cn}`;
+                              const charRefKey = `char_${cn}`;
                               return (
                                 <div
                                   key={`ref_outfit_${cn}`}
@@ -1711,6 +1749,7 @@ export function PipelinePage() {
                                     ...S.refThumbItem,
                                     borderColor: thumb ? "#2563eb" : "#e5e7eb",
                                     background: thumb ? "#eff6ff" : "#fff",
+                                    opacity: isRefExcluded(idx, charRefKey) ? 0.35 : 1,
                                   }}
                                   title={refTag}
                                 >
@@ -1725,11 +1764,18 @@ export function PipelinePage() {
                                     {outfitEntry?.label || cn}
                                   </span>
                                   {thumb && (
-                                    <button
-                                      onClick={e => { e.stopPropagation(); openSaveRefModal(idx); }}
-                                      style={S.refStripSwap}
-                                      title="교체"
-                                    >↻</button>
+                                    <>
+                                      <button
+                                        onClick={e => { e.stopPropagation(); toggleExcludeRef(idx, charRefKey); }}
+                                        style={{ ...S.refStripSwap, color: isRefExcluded(idx, charRefKey) ? "#2563EB" : "#EF4444", right: "20px" }}
+                                        title={isRefExcluded(idx, charRefKey) ? "다시 포함" : "제외"}
+                                      >{isRefExcluded(idx, charRefKey) ? "↩" : "✕"}</button>
+                                      <button
+                                        onClick={e => { e.stopPropagation(); openSaveRefModal(idx); }}
+                                        style={S.refStripSwap}
+                                        title="교체"
+                                      >↻</button>
+                                    </>
                                   )}
                                 </div>
                               );
@@ -1745,12 +1791,14 @@ export function PipelinePage() {
                                 locThumb = regLoc?.references?.[0]?.storageUrl;
                               }
                               const refLocTag = panelLocName ? `ref:location/${panelLocName.replace(/\s/g, "_")}` : "";
+                              const locRefKey = `loc_${panelLocName}`;
                               return panelLocName ? (
                                 <div
                                   style={{
                                     ...S.refThumbItem,
                                     borderColor: locThumb ? "#2563eb" : "#e5e7eb",
                                     background: locThumb ? "#eff6ff" : "#fff",
+                                    opacity: isRefExcluded(idx, locRefKey) ? 0.35 : 1,
                                   }}
                                   title={refLocTag}
                                 >
@@ -1763,11 +1811,18 @@ export function PipelinePage() {
                                   )}
                                   <span style={S.refThumbLabel} title={refLocTag}>장소</span>
                                   {locThumb && (
-                                    <button
-                                      onClick={e => { e.stopPropagation(); openSaveRefModal(idx); }}
-                                      style={S.refStripSwap}
-                                      title="교체"
-                                    >↻</button>
+                                    <>
+                                      <button
+                                        onClick={e => { e.stopPropagation(); toggleExcludeRef(idx, locRefKey); }}
+                                        style={{ ...S.refStripSwap, color: isRefExcluded(idx, locRefKey) ? "#2563EB" : "#EF4444", right: "20px" }}
+                                        title={isRefExcluded(idx, locRefKey) ? "다시 포함" : "제외"}
+                                      >{isRefExcluded(idx, locRefKey) ? "↩" : "✕"}</button>
+                                      <button
+                                        onClick={e => { e.stopPropagation(); openSaveRefModal(idx); }}
+                                        style={S.refStripSwap}
+                                        title="교체"
+                                      >↻</button>
+                                    </>
                                   )}
                                 </div>
                               ) : null;
