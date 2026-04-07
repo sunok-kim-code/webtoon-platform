@@ -16,6 +16,7 @@ export interface PromptRule {
 // ─── 기본 규칙 목록 ────────────────────────────────────────
 
 export const PROMPT_RULES: PromptRule[] = [
+  // ── 기존 규칙 ──
   {
     id: "no_redundancy",
     name: "No Redundancy",
@@ -51,6 +52,61 @@ export const PROMPT_RULES: PromptRule[] = [
     description:
       "기존의 [ref:...] 형식은 반드시 유지하여 일관성을 확보한다.",
   },
+
+  // ── 에피소드 분석 규칙 (구조적 원칙) ──
+  {
+    id: "single_point_setting",
+    name: "Single Point Setting",
+    enabled: true,
+    description:
+      "Setting에는 이동 경로를 포함하지 않는다. 패널 하나에 장소는 반드시 단일 지점만 기술한다.",
+  },
+
+  // ── 에피소드 분석 규칙 (필드별 규칙) ──
+  {
+    id: "emotion_appearance",
+    name: "Emotion via Appearance",
+    enabled: true,
+    description:
+      "캐릭터의 감정을 표정뿐 아니라 외형 변화(머리카락 흩날림, 옷 주름, 손 떨림, 눈물 자국 등)로 시각화한다.",
+  },
+  {
+    id: "three_layer_composition",
+    name: "Three-Layer Composition",
+    enabled: true,
+    description:
+      "Composition에서 전경(foreground), 중경(midground), 후경(background) 3단 레이어를 의식하여 깊이감을 강화한다.",
+  },
+  {
+    id: "psychological_distance",
+    name: "Psychological Distance",
+    enabled: true,
+    description:
+      "캐릭터 간 심리적 거리를 물리적 배치(가까이/멀리, 같은 높이/다른 높이)로 표현한다.",
+  },
+
+  // ── 에피소드 분석 규칙 (연속성 규칙) ──
+  {
+    id: "action_anchoring",
+    name: "Action Anchoring",
+    enabled: true,
+    description:
+      "이전 패널의 포즈나 동작에서 이어지는 연속성을 명시한다. (예: 'Continuing from the previous walking pose…')",
+  },
+  {
+    id: "state_change_description",
+    name: "State Change Description",
+    enabled: true,
+    description:
+      "이전 패널 대비 캐릭터의 상태 변화(표정, 자세, 위치)를 상대적으로 서술한다.",
+  },
+  {
+    id: "camera_consistency",
+    name: "Camera Consistency",
+    enabled: true,
+    description:
+      "같은 씬 내에서는 카메라 앵글의 일관성을 유지한다. 급격한 앵글 변화가 필요할 경우 명시적으로 전환 의도를 표기한다.",
+  },
 ];
 
 // ─── 패널 컨텍스트 (프롬프트 조립에 필요한 정보) ─────────────
@@ -76,14 +132,25 @@ export interface PanelPromptContext {
   characterCount: number;
   /** 캐릭터별 앵글 정보 (back, side 등) */
   characterAngles?: Record<string, string>;
-}
 
-// ─── 규칙 적용 함수 ────────────────────────────────────────
+  // ── 연속성 규칙용 (이전 패널 정보) ──
+  /** 이전 패널의 캐릭터 동작/포즈 요약 */
+  prevAction?: string;
+  /** 이전 패널의 캐릭터 상태 (표정, 자세, 위치 등) */
+  prevCharState?: string;
+  /** 이전 패널의 카메라 앵글 */
+  prevCameraAngle?: string;
+  /** 현재 씬 ID (같은 씬인지 판단용) */
+  sceneId?: string;
+  /** 이전 패널의 씬 ID */
+  prevSceneId?: string;
+}// ============================================================
 
-/**
- * 활성화된 규칙들을 기반으로 패널 프롬프트를 조립합니다.
- * 기존 프롬프트 구조를 유지하면서 각 섹션을 규칙에 맞게 보강합니다.
- */
+
+// ══════════════════════════════════════════════════════════════
+// applyPromptRules — 활성화된 규칙을 프롬프트에 적용
+// ══════════════════════════════════════════════════════════════
+
 export function applyPromptRules(ctx: PanelPromptContext): string {
   const enabledRules = PROMPT_RULES.filter((r) => r.enabled);
   const ruleIds = new Set(enabledRules.map((r) => r.id));
@@ -103,11 +170,21 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
     }
   }
 
+  // [emotion_appearance] 외형 변화로 감정 시각화
+  if (ruleIds.has("emotion_appearance") && ctx.charTokens) {
+    charactersSection += " Visualize emotions through appearance changes (hair movement, clothing wrinkles, trembling hands, tear marks) beyond facial expressions.";
+  }
+
   // ── Setting 섹션 ──
   let settingSection = `Setting: ${ctx.locationName}`;
   if (ctx.timeLabel) settingSection += `, ${ctx.timeLabel}`;
   if (ctx.moodLabel) settingSection += `, ${ctx.moodLabel}`;
   settingSection += ".";
+
+  // [single_point_setting] 단일 지점만 기술
+  if (ruleIds.has("single_point_setting")) {
+    settingSection += " (Single point only — do not include travel routes or multiple locations.)";
+  }
 
   // ── Lighting 섹션 (lighting_details 규칙) ──
   let lightingSection = "";
@@ -116,7 +193,19 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
   }
 
   // ── Camera 섹션 ──
-  const cameraSection = `Camera: ${ctx.cameraAngle}.`;
+  let cameraSection = `Camera: ${ctx.cameraAngle}.`;
+
+  // [camera_consistency] 같은 씬 내 카메라 앵글 일관성
+  if (
+    ruleIds.has("camera_consistency") &&
+    ctx.prevCameraAngle &&
+    ctx.sceneId &&
+    ctx.sceneId === ctx.prevSceneId
+  ) {
+    if (ctx.cameraAngle !== ctx.prevCameraAngle) {
+      cameraSection += ` (Intentional angle shift from ${ctx.prevCameraAngle} — maintain visual continuity.)`;
+    }
+  }
 
   // ── Composition 섹션 ──
   let compositionSection = "";
@@ -133,7 +222,20 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
 
     // [spatial_depth] 캐릭터 2명 이상이면 depth 힌트 추가
     if (ruleIds.has("spatial_depth") && ctx.characterCount >= 2) {
-      comp += ". Emphasize spatial depth between characters (foreground/background layering)";
+      comp +=
+        ". Emphasize spatial depth between characters (foreground/background layering)";
+    }
+
+    // [three_layer_composition] 전경/중경/후경 3단 레이어
+    if (ruleIds.has("three_layer_composition")) {
+      comp +=
+        ". Reinforce depth with three-layer composition: foreground, midground, background";
+    }
+
+    // [psychological_distance] 심리적 거리를 물리적 배치로 표현
+    if (ruleIds.has("psychological_distance") && ctx.characterCount >= 2) {
+      comp +=
+        ". Express psychological distance through physical placement (proximity, height difference)";
     }
 
     compositionSection = `Composition: ${comp}.`;
@@ -141,8 +243,30 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
     compositionSection = `Composition: ${ctx.cameraAngle} framing with spatial depth between characters (foreground/background layering).`;
   }
 
-  // ── Reference Tags 섹션 (reference_tags 규칙) ──
-  const refSection = ruleIds.has("reference_tags") ? ctx.refTags : ctx.refTags;
+  // ── Reference Tags 섹션 ──
+  const refSection = ctx.refTags || "";
+
+  // ── Continuity 섹션 (연속성 규칙) ──
+  let continuitySection = "";
+  const continuityParts: string[] = [];
+
+  // [action_anchoring] 이전 패널 동작 연속성
+  if (ruleIds.has("action_anchoring") && ctx.prevAction) {
+    continuityParts.push(
+      `Continuing from previous action: ${ctx.prevAction}`
+    );
+  }
+
+  // [state_change_description] 이전 패널 대비 상태 변화
+  if (ruleIds.has("state_change_description") && ctx.prevCharState) {
+    continuityParts.push(
+      `State change from previous panel: ${ctx.prevCharState}`
+    );
+  }
+
+  if (continuityParts.length > 0) {
+    continuitySection = `Continuity: ${continuityParts.join(". ")}.`;
+  }
 
   // ── 최종 조립 ──
   return [
@@ -154,16 +278,16 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
     cameraSection,
     compositionSection,
     refSection,
+    continuitySection,
   ]
     .filter(Boolean)
     .join(" ");
 }
 
-// ─── 내부 헬퍼 ────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// 여퍼 함수
+// ══════════════════════════════════════════════════════════════
 
-/**
- * [lighting_details] 시간대·분위기 기반 구체적 조명 힌트 생성
- */
 function buildLightingHint(timeLabel: string, moodLabel: string): string {
   const timeLower = (timeLabel || "").toLowerCase();
   const moodLower = (moodLabel || "").toLowerCase();
@@ -171,13 +295,29 @@ function buildLightingHint(timeLabel: string, moodLabel: string): string {
   let lighting = "Lighting:";
 
   // 시간대 기반
-  if (timeLower.includes("morning") || timeLower === "아침" || timeLower === "오전") {
+  if (
+    timeLower.includes("morning") ||
+    timeLower === "아침" ||
+    timeLower === "오전"
+  ) {
     lighting += " soft natural morning light with gentle warm tones";
-  } else if (timeLower.includes("afternoon") || timeLower === "낮" || timeLower === "오후") {
+  } else if (
+    timeLower.includes("afternoon") ||
+    timeLower === "낮" ||
+    timeLower === "오후"
+  ) {
     lighting += " bright natural daylight";
-  } else if (timeLower.includes("evening") || timeLower === "저녁" || timeLower === "석양") {
+  } else if (
+    timeLower.includes("evening") ||
+    timeLower === "저녁" ||
+    timeLower === "석양"
+  ) {
     lighting += " warm golden-hour light with long shadows";
-  } else if (timeLower.includes("night") || timeLower === "밤" || timeLower === "야간") {
+  } else if (
+    timeLower.includes("night") ||
+    timeLower === "밤" ||
+    timeLower === "야간"
+  ) {
     lighting += " cool ambient night lighting with artificial light sources";
   } else {
     lighting += " natural ambient light";
@@ -199,11 +339,10 @@ function buildLightingHint(timeLabel: string, moodLabel: string): string {
   return lighting + ".";
 }
 
-/**
- * [no_redundancy] Composition에서 Characters 섹션과 중복되는
- * 캐릭터 동작/감정 키워드를 제거합니다.
- */
-function stripCharacterActions(composition: string, charTokens: string): string {
+function stripCharacterActions(
+  composition: string,
+  charTokens: string
+): string {
   if (!charTokens) return composition;
 
   const actionWords = charTokens
