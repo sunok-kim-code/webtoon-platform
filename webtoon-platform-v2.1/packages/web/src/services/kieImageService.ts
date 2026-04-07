@@ -516,13 +516,27 @@ async function callVertexGeminiImage(
     const maxRefImages = Math.min(referenceImageUrls.length, 2);
     for (let i = 0; i < maxRefImages; i++) {
       try {
-        const refRes = await fetch(referenceImageUrls[i]);
-        const refBlob = await refRes.blob();
-        const refBase64 = await blobToBase64(refBlob);
-        const mimeType = refBlob.type || "image/png";
-        parts.push({
-          inlineData: { mimeType, data: refBase64 },
-        });
+        // fetch 방식 시도 → CORS 실패 시 img+canvas fallback
+        let refBase64 = "";
+        let mimeType = "image/png";
+        try {
+          const refRes = await fetch(referenceImageUrls[i]);
+          if (!refRes.ok) throw new Error(`HTTP ${refRes.status}`);
+          const refBlob = await refRes.blob();
+          refBase64 = await blobToBase64(refBlob);
+          mimeType = refBlob.type || "image/png";
+        } catch {
+          // CORS 차단 시 img 태그 + canvas로 base64 변환
+          console.warn(`[VertexImage] fetch CORS failed for ref ${i}, using canvas fallback`);
+          const result = await imageUrlToBase64ViaCanvas(referenceImageUrls[i]);
+          refBase64 = result.data;
+          mimeType = result.mimeType;
+        }
+        if (refBase64) {
+          parts.push({
+            inlineData: { mimeType, data: refBase64 },
+          });
+        }
       } catch (e) {
         console.warn(`[VertexImage] Failed to fetch ref image ${i}:`, e);
       }
@@ -615,6 +629,31 @@ function blobToBase64(blob: Blob): Promise<string> {
     };
     reader.onerror = reject;
     reader.readAsDataURL(blob);
+  });
+}
+
+/** 이미지 URL → img 태그 + canvas → base64 (CORS 우회용 fallback) */
+function imageUrlToBase64ViaCanvas(url: string): Promise<{ data: string; mimeType: string }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) { reject(new Error("Canvas context failed")); return; }
+        ctx.drawImage(img, 0, 0);
+        const dataUrl = canvas.toDataURL("image/png");
+        const base64 = dataUrl.includes(",") ? dataUrl.split(",")[1] : dataUrl;
+        resolve({ data: base64, mimeType: "image/png" });
+      } catch (e) {
+        reject(e);
+      }
+    };
+    img.onerror = () => reject(new Error(`Failed to load image: ${url}`));
+    img.src = url;
   });
 }
 
