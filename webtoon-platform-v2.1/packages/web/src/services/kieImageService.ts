@@ -500,7 +500,7 @@ async function callVertexGeminiImage(
     throw new Error("Vertex AI 토큰이 없습니다. VERTEX_ACCESS_TOKEN을 설정하거나 /api/vertex-token 엔드포인트를 확인하세요.");
   }
 
-  const modelName = "gemini-2.5-pro-preview-06-05";
+  const modelName = "gemini-3-pro-preview";
   const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelName}:generateContent`;
 
   // 레퍼런스 이미지가 있으면 base64로 변환하여 multipart 요청
