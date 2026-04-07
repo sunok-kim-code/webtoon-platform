@@ -1308,26 +1308,30 @@ export function PipelinePage() {
       });
       setGenProgress(prev => ({ ...prev, [idx]: `완료 (${result.duration}초)` }));
 
-      // blob URL → 즉시 Firebase 업로드하여 영구 URL 확보
+      // 즉시 Firebase 업로드하여 영구 URL 확보 (blob URL 또는 외부 임시 URL)
       let finalImageUrl = result.imageUrl;
-      if (result.imageUrl.startsWith("blob:")) {
+      const needsUpload = result.imageUrl.startsWith("blob:") || result.imageUrl.includes("tempfile.") || result.imageUrl.includes("aiquickdraw.com");
+      if (needsUpload) {
         try {
           setGenProgress(prev => ({ ...prev, [idx]: "Firebase 업로드 중..." }));
-          const blobResp = await fetch(result.imageUrl);
-          const blob = await blobResp.blob();
+          let blob: Blob;
+          try {
+            const blobResp = await fetch(result.imageUrl);
+            if (!blobResp.ok) throw new Error(`fetch failed`);
+            blob = await blobResp.blob();
+          } catch {
+            // CORS → 프록시
+            const proxyResp = await fetch(`/api/image-proxy?url=${encodeURIComponent(result.imageUrl)}`);
+            if (!proxyResp.ok) throw new Error(`proxy failed (${proxyResp.status})`);
+            blob = await proxyResp.blob();
+          }
           const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/panels/panel_${idx}_${Date.now()}.png`;
           finalImageUrl = await uploadImage(storagePath, blob);
-          URL.revokeObjectURL(result.imageUrl); // blob URL 해제
+          if (result.imageUrl.startsWith("blob:")) URL.revokeObjectURL(result.imageUrl);
           console.log(`[Panel ${idx}] Firebase 업로드 완료: ${finalImageUrl}`);
           setGenProgress(prev => ({ ...prev, [idx]: `완료 (${result.duration}초)` }));
         } catch (e) {
-          console.warn(`[Panel ${idx}] Firebase 즉시 업로드 실패, blob URL 유지:`, e);
-          // 실패 시 localFileMap에 백업 저장
-          try {
-            const blobResp2 = await fetch(result.imageUrl);
-            const blob2 = await blobResp2.blob();
-            localFileMap.current.set(result.imageUrl, new File([blob2], `panel_${idx}.png`, { type: blob2.type || "image/png" }));
-          } catch { /* blob도 만료되면 포기 */ }
+          console.warn(`[Panel ${idx}] Firebase 즉시 업로드 실패:`, e);
         }
       }
       setGeneratedImages(prev => ({ ...prev, [idx]: finalImageUrl }));
@@ -1373,9 +1377,26 @@ export function PipelinePage() {
     setGenProgress(prev => ({ ...prev, [idx]: "Firebase 저장 중..." }));
 
     try {
-      const resp = await fetch(imageUrl);
-      if (!resp.ok) throw new Error(`이미지 로드 실패 (${resp.status})`);
-      const blob = await resp.blob();
+      let blob: Blob;
+
+      // 이미지 다운로드 (CORS 실패 시 프록시 fallback)
+      try {
+        const resp = await fetch(imageUrl);
+        if (!resp.ok) throw new Error(`direct fetch failed (${resp.status})`);
+        blob = await resp.blob();
+      } catch {
+        // CORS 차단 → 서버 프록시 경유
+        console.log(`[Panel ${idx}] CORS 차단, 프록시 사용: ${imageUrl}`);
+        setGenProgress(prev => ({ ...prev, [idx]: "프록시 경유 다운로드 중..." }));
+        const proxyUrl = `/api/image-proxy?url=${encodeURIComponent(imageUrl)}`;
+        const proxyResp = await fetch(proxyUrl);
+        if (!proxyResp.ok) {
+          const errText = await proxyResp.text();
+          throw new Error(`프록시 실패 (${proxyResp.status}): ${errText.substring(0, 100)}`);
+        }
+        blob = await proxyResp.blob();
+      }
+
       const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/panels/panel_${idx}_${Date.now()}.png`;
       const firebaseUrl = await uploadImage(storagePath, blob);
 
