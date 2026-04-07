@@ -1268,12 +1268,49 @@ export async function loadContextChain(
 // 모든 이미지는 Storage에 업로드 후 URL만 Firestore에 저장
 
 /**
- * 이미지 파일을 Firebase Storage에 업로드하고 다운로드 URL 반환
+ * 이미지 파일을 Firebase Storage(GCS)에 업로드하고 다운로드 URL 반환
+ * Vertex Access Token이 있으면 GCS REST API 사용 (Firebase Auth 불필요)
+ * 없으면 Firebase SDK fallback
  */
 export async function uploadImage(
   path: string,
   file: File | Blob
 ): Promise<string> {
+  const accessToken = localStorage.getItem("VERTEX_ACCESS_TOKEN") || "";
+
+  // ── GCS REST API (Vertex Access Token) ──
+  if (accessToken && accessToken.startsWith("ya29.")) {
+    try {
+      const cfg = getFirebaseConfig();
+      const bucket = cfg?.storageBucket || "rhivclass.firebasestorage.app";
+      const encodedPath = encodeURIComponent(path);
+      const contentType = file.type || "image/png";
+      const url = `https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=media&name=${encodedPath}`;
+
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": contentType,
+          "Authorization": `Bearer ${accessToken}`,
+        },
+        body: file,
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`GCS upload failed (${res.status}): ${errText.substring(0, 300)}`);
+      }
+
+      // GCS 공개 다운로드 URL 생성 (Firebase Storage 형식)
+      const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodedPath}?alt=media`;
+      console.log("[Firebase] Image uploaded via GCS REST:", path);
+      return downloadUrl;
+    } catch (gcsErr) {
+      console.warn("[Firebase] GCS REST upload failed, trying Firebase SDK:", gcsErr);
+    }
+  }
+
+  // ── Firebase SDK fallback ──
   try {
     const { ref: storageRef, uploadBytes, getDownloadURL } = await import(
       "firebase/storage"
@@ -1284,7 +1321,7 @@ export async function uploadImage(
     await uploadBytes(fileRef, file);
     const url = await getDownloadURL(fileRef);
 
-    console.log("[Firebase] Image uploaded:", path);
+    console.log("[Firebase] Image uploaded via SDK:", path);
     return url;
   } catch (error) {
     console.error("[Firebase] uploadImage error:", error);
