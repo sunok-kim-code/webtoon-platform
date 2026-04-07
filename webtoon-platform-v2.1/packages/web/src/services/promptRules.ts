@@ -118,6 +118,43 @@ export const PROMPT_RULES: PromptRule[] = [
   },
 ];
 
+// ─── 추상 감정 → 시각적 신체 동작 매핑 ─────────────────────
+// 추상적 감정 단어를 AI 이미지 생성에 적합한 구체적 신체 묘사로 변환
+export const EMOTION_TO_VISUAL: Record<string, string> = {
+  // 한국어
+  "기쁨": "bright smile, relaxed shoulders, eyes crinkling",
+  "슬픔": "downcast eyes, slumped shoulders, lips pressed together",
+  "분노": "clenched jaw, furrowed brows, tense posture",
+  "놀람": "wide eyes, eyebrows raised, mouth slightly open, body leaning back",
+  "공포": "wide eyes, tense shoulders, hands trembling slightly",
+  "차분": "relaxed posture, calm steady gaze, hands resting naturally",
+  "사랑": "soft gaze, gentle smile, slightly tilted head",
+  "혐오": "nose slightly wrinkled, lips turned down, leaning away",
+  "걱정": "furrowed brows, biting lower lip, hands clasped tightly",
+  "피곤": "half-closed eyes, slouched posture, head slightly drooping",
+  // 영어 (fallback)
+  "joy": "bright smile, relaxed shoulders, eyes crinkling",
+  "sadness": "downcast eyes, slumped shoulders, lips pressed together",
+  "anger": "clenched jaw, furrowed brows, tense posture",
+  "surprise": "wide eyes, eyebrows raised, mouth slightly open, body leaning back",
+  "fear": "wide eyes, tense shoulders, hands trembling slightly",
+  "neutral": "relaxed posture, calm steady gaze, hands resting naturally",
+  "love": "soft gaze, gentle smile, slightly tilted head",
+  "disgust": "nose slightly wrinkled, lips turned down, leaning away",
+};
+
+// 단순 상태 동작 → 구체적 포즈 보강
+export const STATIC_ACTION_ENHANCE: Record<string, string> = {
+  "서 있는": "standing with weight on one leg",
+  "앉아 있는": "seated with hands on lap",
+  "누워 있는": "lying with body slightly curled",
+  "걷는": "mid-stride with arms swaying",
+  "standing": "standing with weight shifted",
+  "sitting": "seated comfortably",
+  "lying": "lying with body slightly turned",
+  "walking": "mid-stride with arms in motion",
+};
+
 // ─── Subject 정보 (캐릭터별 개별 항목) ─────────────────────
 
 export interface SubjectInfo {
@@ -182,16 +219,32 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
   // ── 3. Camera (구도 명확화, 부가 설명 없음) ──
   const cameraSection = `Camera: ${ctx.cameraAngle}.`;
 
-  // ── 4. Subject N (캐릭터별 개별 항목 — 성별 태그 포함) ──
+  // ── 4. Subject N (캐릭터별 개별 항목 — 성별 태그 포함, 추상 감정→시각적 동작 변환) ──
   const subjectSections: string[] = [];
   ctx.subjects.forEach((subj, i) => {
     const tag = [subj.gender, subj.outfit].filter(Boolean).join(", ");
     const label = tag ? `${subj.name} (${tag})` : subj.name;
 
     const details: string[] = [];
-    if (subj.action) details.push(subj.action);
+
+    // 동작: 단순 상태 동사면 보강
+    if (subj.action) {
+      const enhanced = STATIC_ACTION_ENHANCE[subj.action];
+      details.push(enhanced || subj.action);
+    }
+
     if (subj.position) details.push(subj.position);
-    if (subj.expression) details.push(subj.expression);
+
+    // 감정: 추상 단어면 시각적 신체 묘사로 변환
+    if (subj.expression) {
+      const visual = EMOTION_TO_VISUAL[subj.expression];
+      if (visual) {
+        details.push(visual);
+      } else {
+        // 매핑에 없으면 원본 유지
+        details.push(subj.expression);
+      }
+    }
 
     // 뒷모습이면 body language 힌트 추가
     const isBack = ctx.characterAngles?.[subj.name] === "back" ||

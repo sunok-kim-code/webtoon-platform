@@ -655,8 +655,11 @@ export function PipelinePage() {
         const locRef = `ref:location/${panelLocName.replace(/\s/g, "_")}`;
 
         // ── Subject 배열 구성 (캐릭터별 성별/의상/동작/위치) ──
-        // 패널 비주얼 텍스트에서 캐릭터별 동작 추출
-        const visualDesc = (panel.composition || panel.description || "").trim();
+        // 패널 비주얼 텍스트에서 캐릭터별 동작 추출 (composition + description 모두 활용)
+        const visualDesc = (panel.composition || "").trim();
+        const fullDesc = (panel.description || "").trim();
+        // 두 소스 합쳐서 동작 추출 범위 확대
+        const combinedDesc = [visualDesc, fullDesc].filter(Boolean).join(". ");
 
         const subjects: SubjectInfo[] = panel.characters.map((name) => {
           const c = result.characters.find(ch => ch.name === name);
@@ -667,15 +670,24 @@ export function PipelinePage() {
 
           // 패널 비주얼 텍스트에서 이 캐릭터 관련 동작 문구 추출
           let panelAction = "";
-          if (visualDesc) {
+          if (combinedDesc) {
             // 캐릭터 이름 뒤의 문구를 추출 (마침표/쉼표/다른 캐릭터 이름까지)
             const otherNames = panel.characters.filter(n => n !== name);
             const stopPattern = otherNames.length > 0
               ? `(?=[.。,，]|${otherNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")}|$)`
               : `(?=[.。]|$)`;
             const nameRe = new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[이가은는을를의]?\\s*([^.。]+?)${stopPattern}`, "u");
-            const m = visualDesc.match(nameRe);
+            const m = combinedDesc.match(nameRe);
             if (m && m[1]) panelAction = m[1].trim();
+          }
+          // 캐릭터가 1명뿐이고 이름 매칭이 안 된 경우, description 전체를 동작으로 활용
+          if (!panelAction && panel.characters.length === 1 && fullDesc) {
+            // 이름과 장소 정보를 제거한 순수 동작 부분 추출
+            let descAction = fullDesc
+              .replace(new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[이가은는을를의]?\\s*`, "gu"), "")
+              .replace(/^[^.]*?(침대|소파|의자|책상|주방|거실|안방|욕실|복도)[^.]*?\.\s*/u, "")
+              .trim();
+            if (descAction.length > 5) panelAction = descAction;
           }
           // 패널 동작 우선, 없으면 전역 동작
           const action = panelAction || globalAction;

@@ -450,9 +450,36 @@ ${charContext}${locContext}${outfitContext}
 2. 반드시 다음 요소를 포함하라:
    - 카메라 앵글 (cameraAngle)
    - 장소 묘사 (location + 시간대 조명)
-   - 등장 캐릭터의 표정(expression), 포즈(action), 위치(composition)
+   - 등장 캐릭터의 구체적 신체 동작(action), 손의 상태, 자세(pose), 표정의 시각적 묘사
    - "webtoon style, high quality, detailed, korean webtoon art style" 포함
 3. 대사, 효과음, 한국어 텍스트는 aiPrompt에 절대 포함하지 말 것.
+
+[동작 묘사 핵심 규칙 — 웹툰 패널 품질의 핵심, 반드시 준수]
+규칙 A: 추상적 감정 단어 금지 → 시각적 신체 동작으로 변환 (Action over Emotion)
+  - '공포', '슬픔', '분노' 등 추상 감정 단어를 그대로 사용하지 말 것.
+  - 반드시 그 감정이 신체에 어떻게 나타나는지 구체적으로 묘사하라.
+  - 예시:
+    - 공포 → "breaking out in cold sweat, trembling hands, wide eyes with dilated pupils, tense shoulders"
+    - 슬픔 → "downcast eyes, slumped shoulders, lips pressed tightly together, hand loosely hanging"
+    - 분노 → "clenched jaw, furrowed brows, fists tightly balled, leaning forward aggressively"
+    - 놀람 → "mouth slightly open, eyebrows raised high, body leaning backward, hands frozen mid-air"
+  - 극단적 감정 표현은 지양하라. 일상적 불안을 '공포'로, 가벼운 걱정을 '고통'으로 과장하지 말 것.
+
+규칙 B: 손의 상태를 반드시 명시할 것 (Hands reveal emotion)
+  - 캐릭터가 감정을 느끼는 장면에서는 손이 무엇을 하고 있는지 반드시 포함하라.
+  - 예시: "tightly gripping the bed sheets", "white-knuckled fists", "nervously fidgeting with phone", "fingers intertwined on lap", "hand covering mouth"
+
+규칙 C: 역동적 포즈 키워드 사용 (Dynamic Pose)
+  - 단순 상태 묘사('standing', 'sitting', 'lying')만 쓰지 말고, 움직임이 느껴지는 구체적 동작을 포함하라.
+  - 예시:
+    - "뒤척임" → "tossing and turning in bed, tangled in sheets"
+    - "걸어 들어옴" → "striding into the room, one hand pushing the door open"
+    - "서 있음" → "leaning against the kitchen counter with arms crossed"
+  - 원문에 구체적 동작이 있으면(식은땀, 시트를 꽉 쥠, 뒤척임 등) 반드시 aiPrompt에 모두 반영하라. 생략 금지.
+
+규칙 D: 카메라는 디테일을 따라갈 것 (Camera follows detail)
+  - 손가락의 움직임, 땀방울, 눈물 등 미세한 디테일이 중요한 장면에서는 wide shot을 피하고 medium shot 또는 close-up을 사용하라.
+  - 방 전체를 보여줘야 하는 establishing shot이 아닌 한, 감정적 장면은 카메라를 가까이 당겨라.
 
 [카메라 앵글 연출 규칙]
 - 첫 패널은 반드시 wide shot으로 장소 전체를 소개 (establishing shot)
