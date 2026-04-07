@@ -1608,9 +1608,7 @@ export function PipelinePage() {
                               }
                               const outfitThumb = outfitEntry?.references?.[0]?.storageUrl;
                               const charThumb = refImages[`char_${cn}`];
-                              // 갤러리에 등록된 캐릭터 레퍼런스 이미지 fallback
-                              const regCharThumb = !charThumb ? registeredChars.find(rc => rc.name === cn)?.references?.[0]?.storageUrl : undefined;
-                              const thumb = outfitThumb || charThumb || regCharThumb;
+                              const thumb = outfitThumb || charThumb;
                               const refTag = outfitId ? `ref:outfit/${outfitId}` : `ref:outfit/${cn}`;
                               return (
                                 <div
