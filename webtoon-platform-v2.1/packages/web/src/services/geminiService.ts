@@ -570,11 +570,57 @@ async function analyzeSceneWithKieClaudeSonnet46(
       parsed.panels ? (flattenPanelsToSceneResult(parsed, sceneId) ?? parsed) : parsed;
 
     console.log(`[Kie Claude 4.6] 씬 분석 완료: ${result.characters?.length ?? 0}명, scene_id=${result.scene_id}`);
-    return mapClaudeResultToGemini(result, sceneText, existingCharacters.map(c => c.name), existingOutfitIds);
+    return mapClaudeResultToGemini(result, sceneText, existingCharacters.map(c => c.name), existingOutfitIds, existingLocations.map(l => l.name));
   } catch (e: any) {
     console.error("[Kie Claude 4.6] JSON 파싱 실패:", rawResponse.slice(0, 800));
     throw new Error(`Kie.ai Claude 4.6 응답 파싱 실패: ${e.message}`);
   }
+}
+
+/** 장소 이름 퍼지 매칭: Claude 결과 → 기존 등록 장소 이름
+ *  "고급 아파트", "아파트 거실" 등 → 기존 "세은·윤재 아파트 거실"로 매핑 */
+function matchLocationName(claudeLocName: string, registeredNames: string[]): string {
+  if (!claudeLocName || registeredNames.length === 0) return claudeLocName;
+  // 정확 일치
+  if (registeredNames.includes(claudeLocName)) return claudeLocName;
+
+  // 키워드 기반 퍼지 매칭
+  const claudeLower = claudeLocName.toLowerCase().replace(/[·\s_-]+/g, " ");
+  const claudeWords = claudeLower.split(" ").filter(w => w.length > 0);
+  // "고급" 같은 수식어는 매칭에서 제외
+  const decorators = ["고급", "럭셔리", "호화", "작은", "큰", "넓은", "좁은"];
+
+  let bestMatch = "";
+  let bestScore = 0;
+
+  for (const regName of registeredNames) {
+    const regLower = regName.toLowerCase().replace(/[·\s_-]+/g, " ");
+    const regWords = regLower.split(" ").filter(w => w.length > 0);
+    let score = 0;
+
+    for (const cw of claudeWords) {
+      if (decorators.includes(cw)) continue;
+      for (const rw of regWords) {
+        if (cw === rw) score += 3;
+        else if (cw.includes(rw) || rw.includes(cw)) score += 2;
+      }
+    }
+
+    // "아파트" ↔ "아파트" 같은 핵심 장소 유형 매칭 보너스
+    const placeTypes = ["아파트", "카페", "사무실", "거실", "침실", "안방", "주방", "욕실", "학교", "공원", "병원"];
+    for (const pt of placeTypes) {
+      if (claudeLower.includes(pt) && regLower.includes(pt)) score += 2;
+    }
+
+    if (score > bestScore) { bestScore = score; bestMatch = regName; }
+  }
+
+  if (bestScore >= 3 && bestMatch) {
+    console.log(`[Location Match] "${claudeLocName}" → "${bestMatch}" (score: ${bestScore})`);
+    return bestMatch;
+  }
+
+  return claudeLocName;
 }
 
 /** Claude 분석 결과 → GeminiSceneAnalysis 변환
@@ -583,9 +629,13 @@ function mapClaudeResultToGemini(
   claude: ClaudeSceneAnalysisResult,
   sceneText: string,
   existingCharNames: string[] = [],
-  existingOutfitIds: string[] = []
+  existingOutfitIds: string[] = [],
+  existingLocationNames: string[] = []
 ): GeminiSceneAnalysis {
-  const locationName = `${claude.location.sub_category || claude.location.canonical_category}`;
+  // ── 장소 이름 정규화: 기존 등록 장소와 매칭 ──
+  const rawLocName = claude.location.sub_category || claude.location.canonical_category || "";
+  const locationName = matchLocationName(rawLocName, existingLocationNames);
+
   const geminiLocation: GeminiLocationAnalysis = {
     name: locationName,
     description: claude.location.description,
@@ -832,7 +882,7 @@ async function analyzeSceneWithClaudeSonnet(
   try {
     const parsed = extractJSON<ClaudeSceneAnalysisResult>(rawResponse, "[Kie Claude] 씬 분석");
     console.log(`[Claude Sonnet 4.6] 씬 분석 완료: ${parsed.characters?.length ?? 0}명, scene_id=${parsed.scene_id}`);
-    return mapClaudeResultToGemini(parsed, sceneText, existingCharacters.map(c => c.name), existingOutfitIds);
+    return mapClaudeResultToGemini(parsed, sceneText, existingCharacters.map(c => c.name), existingOutfitIds, existingLocations.map(l => l.name));
   } catch (e: any) {
     console.error("[Claude Sonnet 4.6] 응답 파싱 실패:", rawResponse.slice(0, 800));
     throw new Error(`Claude Sonnet 4.6 응답 파싱 실패: ${e.message}`);
@@ -1071,7 +1121,7 @@ async function analyzeSceneWithAnthropicDirect(
   try {
     const parsed = extractJSON<ClaudeSceneAnalysisResult>(rawResponse, "[Anthropic] 씬 분석");
     console.log(`[Anthropic] 씬 분석 완료: ${parsed.characters?.length ?? 0}명, scene_id=${parsed.scene_id}`);
-    return mapClaudeResultToGemini(parsed, sceneText, existingCharacters.map(c => c.name), existingOutfitIds);
+    return mapClaudeResultToGemini(parsed, sceneText, existingCharacters.map(c => c.name), existingOutfitIds, existingLocations.map(l => l.name));
   } catch (e: any) {
     console.error("[Anthropic] JSON 파싱 실패:", rawResponse.slice(0, 800));
     throw new Error(`Anthropic 응답 파싱 실패: ${e.message}`);

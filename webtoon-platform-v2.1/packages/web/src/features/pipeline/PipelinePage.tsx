@@ -112,6 +112,21 @@ function analyzeSceneLocally(sceneText: string): LocalAnalysis {
   for (const [key, name] of Object.entries(locationPatterns)) {
     if (text.includes(key)) { locationName = name; break; }
   }
+  // 기존 갤러리 장소와 매칭 (씬 텍스트에 갤러리 장소 이름 또는 핵심어가 포함되면 사용)
+  try {
+    const regLocs = useReferenceStore.getState().locations;
+    if (regLocs.length > 0) {
+      // 직접 포함 매칭: 씬에 "아파트"가 있고, 갤러리에 "세은·윤재 아파트 거실"이 있으면 매칭
+      for (const rl of regLocs) {
+        const locWords = rl.name.replace(/[·\s_-]+/g, " ").split(" ").filter(w => w.length >= 2);
+        const matchCount = locWords.filter(w => text.includes(w.toLowerCase())).length;
+        if (matchCount >= 1) {
+          locationName = rl.name;
+          break;
+        }
+      }
+    }
+  } catch { /* store not available */ }
 
   const timeMap: Record<string, string> = {
     "아침":"morning","오전":"morning","새벽":"morning",
@@ -887,10 +902,19 @@ export function PipelinePage() {
         });
       }
 
-      // 모든 개별 장소 등록
+      // 모든 개별 장소 등록 (기존 장소와 유사하면 등록 건너뜀)
       const locsToRegister = (result as any).locations || (result.location?.name ? [result.location] : []);
       for (const loc of locsToRegister) {
-        const locExists = existingLocs.some(el => el.name === loc.name);
+        const locExists = existingLocs.some(el => {
+          if (el.name === loc.name) return true;
+          // 퍼지 매칭: 핵심 키워드가 겹치면 같은 장소로 판단
+          const elWords = el.name.replace(/[·\s_-]+/g, " ").toLowerCase().split(" ").filter((w: string) => w.length >= 2);
+          const locWords = (loc.name as string).replace(/[·\s_-]+/g, " ").toLowerCase().split(" ").filter((w: string) => w.length >= 2);
+          const placeTypes = ["아파트", "카페", "사무실", "거실", "침실", "안방", "주방", "욕실", "학교", "공원"];
+          const elType = elWords.find((w: string) => placeTypes.includes(w));
+          const locType = locWords.find((w: string) => placeTypes.includes(w));
+          return elType && locType && elType === locType;
+        });
         if (!locExists && loc.name) {
           addLocation({
             id: `loc_${now}_${loc.name}`,
