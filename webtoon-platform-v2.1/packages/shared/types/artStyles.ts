@@ -83,6 +83,13 @@ export const ART_STYLES: Record<string, ArtStylePreset> = {
     bgSuffix: ", soft watercolor painting, translucent watercolor washes, smooth color gradients, gentle edges, atmospheric watercolor background, high quality",
     propSuffix: ", soft watercolor texture, delicate linework, gentle edges, watercolor object illustration",
   },
+  none: {
+    name: "스타일 없음",
+    prefix: "",
+    charSuffix: "",
+    bgSuffix: "",
+    propSuffix: "",
+  },
   custom: {
     name: "사용자 정의",
     prefix: "",

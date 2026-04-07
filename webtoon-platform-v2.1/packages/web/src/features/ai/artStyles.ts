@@ -31,6 +31,7 @@ export type ArtStyleKey =
   | "actionWebtoon"
   | "murimWebtoon"
   | "watercolorWebtoon"
+  | "none"
   | "custom";
 
 export const ART_STYLES: Record<ArtStyleKey, ArtStyleDef> = {
@@ -137,6 +138,13 @@ export const ART_STYLES: Record<ArtStyleKey, ArtStyleDef> = {
     charSuffix: ", soft watercolor texture, delicate thin linework, translucent watercolor washes, blended soft shading, detailed yet soft facial features, vibrant yet soft color palette, high quality",
     bgSuffix: ", soft watercolor painting, translucent watercolor washes, smooth color gradients, gentle edges, atmospheric watercolor background, high quality",
     propSuffix: ", soft watercolor texture, delicate linework, gentle edges, watercolor object illustration",
+  },
+  none: {
+    name: "스타일 없음",
+    prefix: "",
+    charSuffix: "",
+    bgSuffix: "",
+    propSuffix: "",
   },
   custom: {
     name: "사용자 정의",
