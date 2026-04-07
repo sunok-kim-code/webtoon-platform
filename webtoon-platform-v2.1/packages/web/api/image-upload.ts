@@ -1,19 +1,12 @@
 // Vercel Serverless Function: /api/image-upload
 // 이미지를 서버에서 GCS(Firebase Storage)에 업로드
-// 클라이언트의 Firebase Auth/Storage 권한 문제를 완전히 우회
-//
-// POST /api/image-upload
-//   Body: { imageUrl: string, storagePath: string }
-//   또는 multipart form: file + storagePath
-//
-// 필요 환경변수: GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY, GCS_BUCKET (optional)
+// POST /api/image-upload  Body: { imageUrl, storagePath }
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import crypto from "crypto";
 
 const DEFAULT_BUCKET = "rhivclass.firebasestorage.app";
 
-// ── vertex-token.ts와 동일한 JWT/토큰 로직 ──
 function createJWT(clientEmail: string, privateKey: string): string {
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: "RS256", typ: "JWT" };
@@ -26,36 +19,11 @@ function createJWT(clientEmail: string, privateKey: string): string {
   };
   const encode = (obj: object) =>
     Buffer.from(JSON.stringify(obj)).toString("base64url");
-  const headerB64 = encode(header);
-  const payloadB64 = encode(payload);
-  const signInput = `${headerB64}.${payloadB64}`;
+  const signInput = `${encode(header)}.${encode(payload)}`;
   const sign = crypto.createSign("RSA-SHA256");
   sign.update(signInput);
   const signature = sign.sign(privateKey, "base64url");
   return `${signInput}.${signature}`;
-}
-
-let _cachedToken = "";
-let _tokenExpiry = 0;
-
-async function getAccessToken(clientEmail: string, privateKey: string): Promise<string> {
-  const now = Date.now();
-  if (_cachedToken && _tokenExpiry > now + 60_000) return _cachedToken;
-
-  const jwt = createJWT(clientEmail, privateKey);
-  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`,
-  });
-  if (!tokenRes.ok) {
-    const errText = await tokenRes.text();
-    throw new Error(`Token exchange failed: ${errText}`);
-  }
-  const data = await tokenRes.json();
-  _cachedToken = data.access_token;
-  _tokenExpiry = now + (data.expires_in || 3600) * 1000;
-  return _cachedToken;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -66,31 +34,57 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
-  let privateKey = process.env.GOOGLE_PRIVATE_KEY;
-  if (!clientEmail || !privateKey) {
-    return res.status(500).json({ error: "Service account not configured" });
-  }
-  privateKey = privateKey.replace(/\\n/g, "\n");
-
   try {
-    const { imageUrl, storagePath } = req.body || {};
+    console.log("[image-upload] Request received, body type:", typeof req.body);
+
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    const imageUrl = body?.imageUrl;
+    const storagePath = body?.storagePath;
+
     if (!imageUrl || !storagePath) {
+      console.log("[image-upload] Missing params:", { imageUrl: !!imageUrl, storagePath: !!storagePath });
       return res.status(400).json({ error: "Missing imageUrl or storagePath" });
     }
 
-    // 1) 이미지 다운로드 (서버 → 서버, CORS 없음)
-    const imgRes = await fetch(imageUrl, {
-      headers: { "User-Agent": "WebtoonPlatform/2.1 ImageUploader" },
-    });
-    if (!imgRes.ok) {
-      return res.status(502).json({ error: `Image fetch failed (${imgRes.status}): ${imgRes.statusText}` });
-    }
-    const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
-    const contentType = imgRes.headers.get("content-type") || "image/png";
+    console.log("[image-upload] Downloading image:", imageUrl.substring(0, 80));
 
-    // 2) GCS 업로드
-    const accessToken = await getAccessToken(clientEmail, privateKey);
+    // 1) 이미지 다운로드
+    const imgRes = await fetch(imageUrl);
+    if (!imgRes.ok) {
+      const errMsg = `Image fetch failed (${imgRes.status})`;
+      console.error("[image-upload]", errMsg);
+      return res.status(502).json({ error: errMsg });
+    }
+    const imgArrayBuffer = await imgRes.arrayBuffer();
+    const imgBuffer = Buffer.from(imgArrayBuffer);
+    const contentType = imgRes.headers.get("content-type") || "image/png";
+    console.log("[image-upload] Image downloaded:", imgBuffer.length, "bytes,", contentType);
+
+    // 2) Access Token 발급
+    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL || "";
+    let privateKey = process.env.GOOGLE_PRIVATE_KEY || "";
+    if (!clientEmail || !privateKey) {
+      console.error("[image-upload] Missing GOOGLE_CLIENT_EMAIL or GOOGLE_PRIVATE_KEY");
+      return res.status(500).json({ error: "Service account not configured" });
+    }
+    privateKey = privateKey.replace(/\\n/g, "\n");
+
+    const jwt = createJWT(clientEmail, privateKey);
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`,
+    });
+    if (!tokenRes.ok) {
+      const errText = await tokenRes.text();
+      console.error("[image-upload] Token exchange failed:", errText.substring(0, 200));
+      return res.status(500).json({ error: "Token exchange failed" });
+    }
+    const tokenData: any = await tokenRes.json();
+    const accessToken = tokenData.access_token;
+    console.log("[image-upload] Token acquired");
+
+    // 3) GCS 업로드
     const bucket = process.env.GCS_BUCKET || DEFAULT_BUCKET;
     const encodedPath = encodeURIComponent(storagePath);
     const gcsUrl = `https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=media&name=${encodedPath}`;
@@ -106,14 +100,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!uploadRes.ok) {
       const errText = await uploadRes.text();
-      return res.status(502).json({ error: `GCS upload failed (${uploadRes.status}): ${errText.substring(0, 300)}` });
+      console.error("[image-upload] GCS upload failed:", errText.substring(0, 300));
+      return res.status(502).json({ error: `GCS upload failed (${uploadRes.status}): ${errText.substring(0, 200)}` });
     }
 
-    // 3) 다운로드 URL 반환
-    const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodedPath}?alt=media`;
+    console.log("[image-upload] GCS upload success:", storagePath);
 
+    const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodedPath}?alt=media`;
     return res.status(200).json({ url: downloadUrl });
+
   } catch (err: any) {
-    return res.status(500).json({ error: err.message || "Upload failed" });
+    console.error("[image-upload] Unhandled error:", err?.message || err, err?.stack?.substring(0, 500));
+    return res.status(500).json({ error: err?.message || "Upload failed" });
   }
 }
