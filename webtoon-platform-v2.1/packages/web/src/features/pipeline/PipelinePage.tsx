@@ -955,7 +955,7 @@ export function PipelinePage() {
           timeLabel,
           moodLabel,
           cameraAngle: panel.cameraAngle,
-          rawComposition: panel.composition || "",
+          rawComposition: panel.composition || panel.description || "",
           refTags: outfitRefs ? `[${outfitRefs}, ${locRef}]` : `[${locRef}]`,
           characterCount: panel.characters.length,
           characterAngles: (panel as any).characterAngles,

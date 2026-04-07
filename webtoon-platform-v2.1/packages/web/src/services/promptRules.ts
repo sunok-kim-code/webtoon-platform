@@ -287,9 +287,9 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
   }
 
   // ── 최종 조립 ──
+  // ctx.description 제거 — Composition 섹션이 비주얼 행동 묘사를 전담하므로 중복 방지
   return [
     `webtoon panel.`,
-    ctx.description,
     charactersSection,
     settingSection,
     lightingSection,
