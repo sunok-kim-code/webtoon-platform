@@ -386,6 +386,8 @@ ${charContext}${locContext}${outfitContext}
       "emotion": "이 패널의 전체적인 감정 톤",
       "composition": "구도 설명 (예: '왼쪽에 민지, 오른쪽에 서호가 마주보는 구도')",
       "aiPrompt": "webtoon style, [영어로 된 완성된 이미지 생성 프롬프트]. high quality, detailed, korean webtoon art style",
+      "dialogues": [{"character": "캐릭터이름", "text": "대사 내용"}],
+      "sfx": ["효과음 텍스트 (예: 쾅!, 끼이익, 두근두근)"],
       "notes": "연출 참고 사항"
     }
   ],
@@ -417,6 +419,12 @@ ${charContext}${locContext}${outfitContext}
 3. 한 장면 안에 장소 이동이나 시간 변화가 있는 경우에만 패널을 분리하라.
 4. 결과적으로 입력 씬의 씬 블록 수와 패널 수가 거의 일치해야 한다.
 5. 절대로 장면을 생략하거나 합치지 마세요. 모든 장면이 패널에 반영되어야 합니다.
+
+[대사/효과음 추출 규칙 — 반드시 준수]
+1. 각 패널의 대사는 dialogues 배열에 {character, text} 형태로 추출하라.
+2. 효과음(*쾅!*, *두근두근*, (끼이익!) 등)은 sfx 배열에 텍스트만 추출하라.
+3. dialogues와 sfx는 aiPrompt에 포함하지 말 것. aiPrompt는 순수 비주얼 묘사만.
+4. 대사가 없으면 dialogues를 빈 배열 []로, 효과음이 없으면 sfx를 빈 배열 []로 반환하라.
 
 [연출 지침]
 - 첫 패널은 wide shot으로 장소 전체를 소개
