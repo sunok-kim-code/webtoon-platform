@@ -236,6 +236,8 @@ export interface PanelPromptContext {
   cameraAngle: string;
   /** 원본 composition 텍스트 (분석 결과에서 온 것) */
   rawComposition: string;
+  /** 패널 장면 설명 (description — 무엇이 일어나는지) */
+  sceneDescription: string;
   /** 레퍼런스 태그 문자열 (예: "[ref:outfit/지호_school, ref:location/교실]") */
   refTags: string;
   /** 캐릭터 수 */
@@ -286,7 +288,22 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
   cameraWithScale += ". Character is correctly scaled to the environment";
   const cameraSection = `Camera: ${cameraWithScale}.`;
 
-  // ── 4. Subject N (캐릭터별 개별 항목 — 규칙2: 동작 순화, 규칙5: 감정 담백화 적용) ──
+  // ── 4. Scene (장면 설명 — composition + description에서 핵심 상황 전달) ──
+  let sceneSection = "";
+  {
+    // rawComposition과 sceneDescription 합쳐서 중복 제거
+    const parts: string[] = [];
+    if (ctx.rawComposition) parts.push(ctx.rawComposition.trim());
+    if (ctx.sceneDescription && ctx.sceneDescription !== ctx.rawComposition) {
+      parts.push(ctx.sceneDescription.trim());
+    }
+    const sceneText = softenText(parts.join(". ").replace(/\.+/g, ".").trim());
+    if (sceneText) {
+      sceneSection = `Scene: ${sceneText}.`;
+    }
+  }
+
+  // ── 5. Subject N (캐릭터별 개별 항목 — 규칙2: 동작 순화, 규칙5: 감정 담백화 적용) ──
   const subjectSections: string[] = [];
   ctx.subjects.forEach((subj, i) => {
     const tag = [subj.gender, subj.outfit].filter(Boolean).join(", ");
@@ -355,6 +372,7 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
     styleSection,
     settingSection,
     cameraSection,
+    sceneSection,
     ...subjectSections,
     depthSection,
     locRef,
