@@ -390,7 +390,9 @@ ${charContext}${locContext}${outfitContext}
       "cameraAngle": "wide shot|medium shot|close-up|extreme close-up|over shoulder|bird's eye|low angle|dutch angle 중 하나",
       "emotion": "이 패널의 전체적인 감정 톤",
       "composition": "구도 설명 (예: '왼쪽에 민지, 오른쪽에 서호가 마주보는 구도')",
-      "aiPrompt": "webtoon style, [영어로 된 완성된 이미지 생성 프롬프트]. high quality, detailed, korean webtoon art style",
+      "panel_type": "visual|dialogue|narration 중 하나. visual=캐릭터+배경 있는 장면, dialogue=대사 위주(캐릭터 있지만 비주얼 묘사 적음), narration=캐릭터 없는 배경/나레이션",
+      "sceneId": "#N 마커가 있으면 해당 마커 값(예: '#1', '#2'). 없으면 'scene_패널번호'",
+      "aiPrompt": "webtoon style, [영어로 된 이미지 생성 프롬프트 — 대사/효과음 제외, 순수 비주얼만]. 캐릭터 표정, 포즈, 장소, 시간대 조명을 반드시 포함. high quality, detailed, korean webtoon art style",
       "dialogues": [{"character": "캐릭터이름", "text": "대사 내용"}],
       "sfx": ["효과음 텍스트 (예: 쾅!, 끼이익, 두근두근)"],
       "notes": "연출 참고 사항"
@@ -420,22 +422,43 @@ ${charContext}${locContext}${outfitContext}
 1. 씬 텍스트에 "#숫자" 마커(예: #1, #2, #3)가 있으면 각 마커가 하나의 씬 블록이다. 한 블록 = 1개의 패널로 변환하라.
    - "#1" 마커부터 다음 "#2" 마커 직전까지가 하나의 블록이다.
    - 블록 안의 대사 줄("캐릭터이름: 대사")과 지문은 모두 같은 패널에 포함시켜라. 대사를 별도 패널로 분리하지 말 것.
+   - sceneId는 해당 마커 값을 그대로 사용하라 (예: "#1", "#2", "#3").
 2. "#숫자" 마커가 없으면 문맥 단위로 장면을 나눠라. 한 줄 = 한 패널이 아니다. 연속된 동작/대사/지문을 하나의 장면으로 묶어라.
+   - sceneId는 "scene_1", "scene_2" 형식으로 순서대로 부여하라.
 3. 한 장면 안에 장소 이동이나 시간 변화가 있는 경우에만 패널을 분리하라.
 4. 결과적으로 입력 씬의 씬 블록 수와 패널 수가 거의 일치해야 한다.
 5. 절대로 장면을 생략하거나 합치지 마세요. 모든 장면이 패널에 반영되어야 합니다.
 
+[패널 타입 분류 규칙 — 반드시 준수]
+1. panel_type은 반드시 다음 기준으로 분류하라:
+   - "visual": 캐릭터가 등장하고 비주얼 묘사가 있는 장면 (기본값)
+   - "dialogue": 캐릭터가 등장하지만 대사 위주이고 비주얼 묘사가 거의 없는 장면
+   - "narration": 캐릭터가 등장하지 않는 배경/나레이션/상황 설명 장면
+2. 대부분의 패널은 "visual"이다. "dialogue"와 "narration"은 예외적인 경우에만 사용하라.
+
 [대사/효과음 추출 규칙 — 반드시 준수]
-1. 각 패널의 대사는 dialogues 배열에 {character, text} 형태로 추출하라.
+1. 각 패널의 대사는 dialogues 배열에 {"character": "이름", "text": "대사"} 형태로 추출하라.
+   - 대사 형식: "캐릭터이름: 대사내용" 또는 "캐릭터이름: (지문) 대사내용"
 2. 효과음(*쾅!*, *두근두근*, (끼이익!) 등)은 sfx 배열에 텍스트만 추출하라.
-3. dialogues와 sfx는 aiPrompt에 포함하지 말 것. aiPrompt는 순수 비주얼 묘사만.
+   - *별표로 감싼 텍스트* 또는 (짧은 의성어/의태어!?) 형태만 효과음으로 인식
+   - (의상 A), (놀라며) 같은 지문은 효과음이 아니다
+3. aiPrompt에는 대사와 효과음을 절대 포함하지 말 것. aiPrompt는 순수 비주얼 묘사만.
 4. 대사가 없으면 dialogues를 빈 배열 []로, 효과음이 없으면 sfx를 빈 배열 []로 반환하라.
 
-[연출 지침]
-- 첫 패널은 wide shot으로 장소 전체를 소개
+[aiPrompt 생성 규칙 — 반드시 준수]
+1. aiPrompt는 반드시 영어로 작성하라.
+2. 반드시 다음 요소를 포함하라:
+   - 카메라 앵글 (cameraAngle)
+   - 장소 묘사 (location + 시간대 조명)
+   - 등장 캐릭터의 표정(expression), 포즈(action), 위치(composition)
+   - "webtoon style, high quality, detailed, korean webtoon art style" 포함
+3. 대사, 효과음, 한국어 텍스트는 aiPrompt에 절대 포함하지 말 것.
+
+[카메라 앵글 연출 규칙]
+- 첫 패널은 반드시 wide shot으로 장소 전체를 소개 (establishing shot)
 - 감정 변화가 큰 순간은 close-up으로 처리
+- 대화 장면은 medium shot 또는 over shoulder
 - 마지막 패널은 감정적 여운을 남기는 구도
-- aiPrompt는 반드시 영어로, webtoon style과 high quality 포함
 - 캐릭터 promptSnippet은 해당 캐릭터의 시각적 특징을 영어로 상세히
 - 기존 등록된 캐릭터가 있다면 해당 정보를 활용하여 일관성 유지`;
 }
