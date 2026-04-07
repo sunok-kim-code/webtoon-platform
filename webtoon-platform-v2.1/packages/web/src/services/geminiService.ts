@@ -262,13 +262,18 @@ function matchOutfitId(analysisOutfitId: string, charName: string, registeredOut
 
   for (const regId of registeredOutfitIds) {
     const regLower = regId.toLowerCase();
-    // 같은 캐릭터의 의상인지 확인
-    if (!regLower.includes(charNameLower) && !charNameLower.includes(regLower.split("_")[0])) continue;
-    // 키워드 매칭 점수
-    const regKeywords = regLower.split("_").filter(k => k.length > 1);
+    const regFirstPart = regLower.split("_")[0];
+    // 같은 캐릭터의 의상인지 확인 (한글 이름 ↔ 로마자 ID 모두 허용)
+    const isCharMatch = regLower.includes(charNameLower)
+      || charNameLower.includes(regFirstPart)
+      || analysisOutfitId.toLowerCase().startsWith(regFirstPart + "_")
+      || regLower.startsWith(analysisKeywords[0] + "_");
+    if (!isCharMatch) continue;
+    // 키워드 매칭 점수 (캐릭터 이름 부분 제외)
+    const regKeywords = regLower.split("_").filter(k => k.length > 1 && k !== regFirstPart);
     let score = 0;
     for (const ak of analysisKeywords) {
-      if (ak === "의상") continue; // "의상" 키워드는 무시
+      if (ak === "의상" || ak === charNameLower || ak === analysisKeywords[0]) continue;
       for (const rk of regKeywords) {
         if (ak === rk) score += 3;
         else if (ak.includes(rk) || rk.includes(ak)) score += 2;

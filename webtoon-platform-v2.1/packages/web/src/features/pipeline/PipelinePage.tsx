@@ -94,7 +94,9 @@ async function savePipelineToFirebase(
   // localStorage에도 항상 백업
   try {
     localStorage.setItem(localKey(projectId, episodeId), JSON.stringify(payload));
-  } catch {}
+  } catch (e) {
+    console.warn("[Pipeline] localStorage 저장 실패 (용량 초과 가능):", e);
+  }
 
   // Firebase 저장
   if (isFirebaseReady() && projectId && episodeId) {
