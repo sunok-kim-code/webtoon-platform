@@ -415,21 +415,103 @@ export function PipelinePage() {
     return () => { if (sceneTextSaveTimerRef.current) clearTimeout(sceneTextSaveTimerRef.current); };
   }, [sceneText, dataLoaded, projectId, episodeId]);
 
+  // ── blob URL → Firebase Storage 업로드 헬퍼 ──
+  const resolveBlobToFirebase = useCallback(async (url: string, subPath: string): Promise<string> => {
+    if (!url.startsWith("blob:")) return url; // 이미 원격 URL이면 그대로
+    const file = localFileMap.current.get(url);
+    if (!file) {
+      // File 객체가 없으면 fetch로 Blob 가져오기
+      const resp = await fetch(url);
+      const blob = await resp.blob();
+      const path = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/${subPath}_${Date.now()}.png`;
+      return await uploadImage(path, blob);
+    }
+    const ext = file.name.split(".").pop() || "png";
+    const path = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/${subPath}_${Date.now()}.${ext}`;
+    return await uploadImage(path, file);
+  }, [projectId, episodeId]);
+
+  // ── blob URL → Firebase 일괄 변환 (저장 전) ──
+  const resolveAllBlobUrls = useCallback(async (
+    images: Record<number, string>,
+    customRefs: Record<number, string[]>,
+  ) => {
+    const resolvedImages = { ...images };
+    const resolvedRefs = { ...customRefs };
+    const promises: Promise<void>[] = [];
+
+    // generatedImages 내 blob URL 변환
+    for (const [idx, url] of Object.entries(resolvedImages)) {
+      if (url.startsWith("blob:")) {
+        promises.push(
+          resolveBlobToFirebase(url, `panels/panel_${idx}`).then(resolved => {
+            resolvedImages[Number(idx)] = resolved;
+            // 상태도 업데이트하여 이후 저장 시 중복 업로드 방지
+            setGeneratedImages(prev => ({ ...prev, [Number(idx)]: resolved }));
+          }).catch(e => console.warn(`[AutoSave] panel ${idx} blob resolve failed:`, e))
+        );
+      }
+    }
+
+    // panelCustomRefs 내 blob URL 변환
+    for (const [idx, urls] of Object.entries(resolvedRefs)) {
+      const updatedUrls = [...urls];
+      for (let i = 0; i < updatedUrls.length; i++) {
+        if (updatedUrls[i].startsWith("blob:")) {
+          const capturedIdx = idx;
+          const capturedI = i;
+          promises.push(
+            resolveBlobToFirebase(updatedUrls[capturedI], `custom_refs/panel_${capturedIdx}_ref_${capturedI}`).then(resolved => {
+              updatedUrls[capturedI] = resolved;
+            }).catch(e => console.warn(`[AutoSave] customRef ${capturedIdx}[${capturedI}] blob resolve failed:`, e))
+          );
+        }
+      }
+      resolvedRefs[Number(idx)] = updatedUrls;
+    }
+
+    await Promise.all(promises);
+
+    // panelCustomRefs 상태도 업데이트
+    if (promises.length > 0) {
+      setPanelCustomRefs(resolvedRefs);
+    }
+
+    return { resolvedImages, resolvedRefs };
+  }, [resolveBlobToFirebase]);
+
   // ── 자동 저장 (분석 완료 후 변경 시, 2초 디바운스) ──
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!dataLoaded || !analysis) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
+    saveTimerRef.current = setTimeout(async () => {
+      // blob URL이 있으면 Firebase에 업로드 후 영구 URL로 변환
+      const hasBlobImages = Object.values(generatedImages).some(u => u.startsWith("blob:"));
+      const hasBlobRefs = Object.values(panelCustomRefs).some(urls => urls.some(u => u.startsWith("blob:")));
+
+      let finalImages = generatedImages;
+      let finalCustomRefs = panelCustomRefs;
+
+      if (hasBlobImages || hasBlobRefs) {
+        try {
+          const resolved = await resolveAllBlobUrls(generatedImages, panelCustomRefs);
+          finalImages = resolved.resolvedImages;
+          finalCustomRefs = resolved.resolvedRefs;
+        } catch (e) {
+          console.warn("[AutoSave] blob resolve failed, saving with current URLs:", e);
+        }
+      }
+
       const saveData: Record<string, any> = {
         sceneText,
         analysisMode,
         analysis,
         editingPanels,
         panelPrompts,
-        generatedImages,
+        generatedImages: finalImages,
         refImages,
-        panelCustomRefs,
+        panelCustomRefs: finalCustomRefs,
       };
       // v1.0 말풍선 데이터 보존
       if (Object.keys(v1BubblesByPanel).length > 0) {
@@ -441,7 +523,7 @@ export function PipelinePage() {
       savePipelineToFirebase(projectId, episodeId, saveData as any);
     }, 2000);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, [dataLoaded, analysis, editingPanels, panelPrompts, generatedImages, refImages, panelCustomRefs, sceneText, analysisMode, projectId, episodeId, v1BubblesByPanel, v1PageSize, v1PageSizeByPanel]);
+  }, [dataLoaded, analysis, editingPanels, panelPrompts, generatedImages, refImages, panelCustomRefs, sceneText, analysisMode, projectId, episodeId, v1BubblesByPanel, v1PageSize, v1PageSizeByPanel, resolveAllBlobUrls]);
 
   const geminiReady = isGeminiConfigured();
   const kieReady = isKieImageConfigured();
@@ -1284,22 +1366,6 @@ export function PipelinePage() {
       }));
     }
   }, [generatedImages, editingPanels, analysis]);
-
-  // ── blob URL → Firebase Storage 업로드 헬퍼 ──
-  const resolveBlobToFirebase = useCallback(async (url: string, subPath: string): Promise<string> => {
-    if (!url.startsWith("blob:")) return url; // 이미 원격 URL이면 그대로
-    const file = localFileMap.current.get(url);
-    if (!file) {
-      // File 객체가 없으면 fetch로 Blob 가져오기
-      const resp = await fetch(url);
-      const blob = await resp.blob();
-      const path = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/${subPath}_${Date.now()}.png`;
-      return await uploadImage(path, blob);
-    }
-    const ext = file.name.split(".").pop() || "png";
-    const path = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/${subPath}_${Date.now()}.${ext}`;
-    return await uploadImage(path, file);
-  }, [projectId, episodeId]);
 
   // ── 레퍼런스 저장 확정 (Firebase 직접 저장 보장) ──
   const confirmSaveReference = useCallback(async () => {
