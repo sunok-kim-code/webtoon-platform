@@ -3,6 +3,11 @@
   "buildCommand": "cd packages/web && npx vite build",
   "outputDirectory": "packages/web/dist",
   "framework": null,
+  "functions": {
+    "api/**/*.ts": {
+      "runtime": "@vercel/node@3"
+    }
+  },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
