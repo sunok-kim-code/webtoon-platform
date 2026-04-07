@@ -27,6 +27,7 @@ import {
   type PanelType,
 } from "@/services/geminiService";
 import { ReferenceResolver, buildFallbackPrompt } from "@/services/referenceResolver";
+import { applyPromptRules, type PanelPromptContext } from "@/services/promptRules";
 import {
   figmaSyncFullEpisode,
   figmaBatchSync,
@@ -891,15 +892,19 @@ export function PipelinePage() {
 
         // 프롬프트: 씬 행동 + 캐릭터(이름+감정) + 장소(시간/분위기) + 카메라
         // 외형/의상 텍스트 설명 없음 — referenceImageUrls 의 이미지가 그 역할을 함
-        prompts[idx] = [
-          `webtoon panel.`,
-          panel.description,
-          charTokens ? `Characters: ${charTokens}.` : "",
-          `Setting: ${panelLocName}${timeLabel ? ", " + timeLabel : ""}${moodLabel ? ", " + moodLabel : ""}.`,
-          `Camera: ${panel.cameraAngle}.`,
-          panel.composition ? `Composition: ${panel.composition}.` : "",
-          outfitRefs ? `[${outfitRefs}, ${locRef}]` : `[${locRef}]`,
-        ].filter(Boolean).join(" ");
+        const panelCtx: PanelPromptContext = {
+          description: panel.description,
+          charTokens,
+          locationName: panelLocName,
+          timeLabel,
+          moodLabel,
+          cameraAngle: panel.cameraAngle,
+          rawComposition: panel.composition || "",
+          refTags: outfitRefs ? `[${outfitRefs}, ${locRef}]` : `[${locRef}]`,
+          characterCount: panel.characters.length,
+          characterAngles: (panel as any).characterAngles,
+        };
+        prompts[idx] = applyPromptRules(panelCtx);
       });
       setPanelPrompts(prompts);
       setCurrentStep("step2_storyboard");
