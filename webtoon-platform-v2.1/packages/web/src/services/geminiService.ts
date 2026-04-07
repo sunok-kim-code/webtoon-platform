@@ -357,7 +357,7 @@ ${charContext}${locContext}${outfitContext}
       "characterCore": "Character's PERMANENT physical appearance WITHOUT any clothing. English only. Include: (1) HAIR: exact color, length, style, parting, bangs; (2) EYES: color, shape, eyelid; (3) SKIN: tone; (4) BUILD: height, body type; (5) FACE: shape, jawline, eyebrows, nose, lips, any marks (moles, scars, dimples). This field stays IDENTICAL across all panels regardless of outfit changes.",
       "outfit": "EXTREMELY detailed CLOTHING ONLY for this scene in English. MUST specify: (1) TOP: exact garment type, color and material (e.g. cream cashmere fitted turtleneck); (2) BOTTOM: type, color, length (e.g. straight-leg black denim jeans); (3) OUTER layer if any (jacket, cardigan, coat — type, color, length, open/closed); (4) FOOTWEAR: type and color (e.g. white leather sneakers). Do NOT include accessories here.",
       "outfitLabel": "Short 2-4 word label summarizing the outfit style in English. Examples: 'casual hoodie', 'formal suit', 'school uniform', 'leather jacket look', 'cozy homewear', 'office attire', 'summer dress'. Must be concise and descriptive enough to distinguish from other outfits.",
-      "outfitNormalizedId": "Unique outfit library ID in format: '{character_name_romanized}_outfit_{keyword}'. Use lowercase, underscores only, no spaces. Examples: 'jiho_outfit_school_uniform', 'minji_outfit_black_suit', 'seho_outfit_casual_hoodie'. Must be consistent across panels where the same outfit appears.",
+      "outfitNormalizedId": "Unique outfit library ID. 기존 등록된 의상 ID가 있으면 반드시 그것을 사용. 새로 생성할 때는 '{캐릭터이름}_outfit_{영어키워드}' 형식. 캐릭터이름은 기존 등록된 의상 ID의 이름 형식과 동일하게 (예: 기존 '세은_outfit_...'이면 '세은', 기존 'jiho_outfit_...'이면 'jiho'). 키워드는 영어 소문자, underscore만 사용. 의상이 동일하면 모든 패널에서 반드시 같은 ID 사용.",
       "accessories": "ALL accessories and props the character wears/carries, in English. Include: glasses (frame shape and color), watch, necklace, earrings, rings, bracelets, bag/purse (type and color), belt, hat, scarf, hair accessories, phone, etc. Be specific about style and color for each item. If none, write 'none'.",
       "action": "standing|sitting|running|walking|talking|smiling|crying|reading|entering|leaving 등",
       "angle": "front|side|back|three-quarter 중 하나",
@@ -403,7 +403,9 @@ ${charContext}${locContext}${outfitContext}
 }
 
 [의상 라이브러리 규칙 — 반드시 준수]
-1. outfitNormalizedId는 씬 전체에서 동일한 의상이면 반드시 동일한 값을 사용합니다
+1. ★ 기존 등록된 의상 ID 목록이 제공되면, 같은 의상은 반드시 기존 ID를 그대로 사용하라. 새 ID를 만들지 말 것.
+2. ★ 캐릭터 이름 형식: 기존 등록된 의상 ID가 한글 이름(예: '세은_outfit_...')을 사용하면 한글 그대로, 영어(예: 'jiho_outfit_...')이면 영어를 사용하라. 기존 ID가 없을 때만 한글 이름을 사용하라.
+3. outfitNormalizedId는 씬 전체에서 동일한 의상이면 반드시 동일한 값을 사용합니다
    - 예: 지호가 씬 내내 교복을 입으면 모든 패널에서 "jiho_outfit_school_uniform" 동일 사용
 2. characterCore는 의상과 무관한 '기본 외형'만 포함합니다 (머리색, 눈, 피부, 체형, 얼굴형)
    - 교복을 입든 정장을 입든 characterCore 값은 항상 동일해야 합니다

@@ -690,16 +690,9 @@ export function PipelinePage() {
           const char = latestCharsForOutfit.find(ch => ch.name === c.name) || existingChars.find(ch => ch.name === c.name);
           if (!char) return;
 
-          // 중복 체크: ID 일치 또는 같은 캐릭터의 기존 의상 중 label/description 키워드 매칭
+          // 중복 체크: ID 정확 일치만 (키워드 퍼지 매칭 제거 — 오판 방지)
           const charOutfits = existingOutfits.filter(o => o.characterId === char.id || o.characterName === char.name);
-          const outfitKeywords = normalizedId.toLowerCase().split("_").filter((k: string) => k.length > 1);
-          const alreadyExists = charOutfits.some(o => {
-            if (o.id === normalizedId) return true;
-            // label 또는 description에 키워드가 포함되면 동일 의상으로 판단
-            const existingText = `${o.label} ${o.description}`.toLowerCase();
-            const matchCount = outfitKeywords.filter((kw: string) => existingText.includes(kw)).length;
-            return matchCount >= 2 || (outfitKeywords.length === 1 && matchCount === 1);
-          });
+          const alreadyExists = charOutfits.some(o => o.id === normalizedId);
           if (alreadyExists) return;
 
           const accessoriesArr = (c as any).accessories && (c as any).accessories !== "none"
