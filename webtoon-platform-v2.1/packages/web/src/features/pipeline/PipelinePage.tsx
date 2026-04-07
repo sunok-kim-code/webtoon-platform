@@ -978,6 +978,38 @@ export function PipelinePage() {
     }
   }, [projectId, episodeId]);
 
+  // ── 패널 이미지 직접 업로드 ──
+  const panelUploadRef = useRef<HTMLInputElement>(null);
+  const panelUploadTarget = useRef<number>(-1);
+
+  const triggerPanelImageUpload = useCallback((idx: number) => {
+    panelUploadTarget.current = idx;
+    panelUploadRef.current?.click();
+  }, []);
+
+  const handlePanelImageUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const targetIdx = panelUploadTarget.current;
+    if (!file || targetIdx < 0) return;
+    e.target.value = "";
+
+    setGeneratingIndex(targetIdx);
+    setGenProgress(prev => ({ ...prev, [targetIdx]: "업로드 중..." }));
+    try {
+      const ext = file.name.split(".").pop() || "png";
+      const path = `pipeline/${projectId || "default"}/${episodeId || "default"}/panels/panel_${targetIdx}_${Date.now()}.${ext}`;
+      const url = await uploadImage(path, file);
+      setGeneratedImages(prev => ({ ...prev, [targetIdx]: url }));
+      setGenProgress(prev => ({ ...prev, [targetIdx]: "업로드 완료" }));
+      console.log(`[Panel ${targetIdx}] Image uploaded: ${url}`);
+    } catch (err: any) {
+      console.error(`[Panel ${targetIdx}] Image upload failed:`, err);
+      setGenProgress(prev => ({ ...prev, [targetIdx]: `업로드 실패: ${err.message}` }));
+    } finally {
+      setGeneratingIndex(null);
+    }
+  }, [projectId, episodeId]);
+
   // ── 커스텀 레퍼런스: 제거 ──
   const removeCustomRef = useCallback((panelIdx: number, refUrl: string) => {
     setPanelCustomRefs(prev => {
@@ -2003,6 +2035,14 @@ export function PipelinePage() {
                           >
                             {isGen ? "생성 중..." : hasImage ? "재생성" : "이미지 생성"}
                           </button>
+                          <button
+                            onClick={() => triggerPanelImageUpload(idx)}
+                            style={S.panelUploadBtn}
+                            disabled={isGen || isGeneratingAll}
+                            title="이미지 직접 업로드"
+                          >
+                            📁
+                          </button>
                           {hasImage && (
                             <button
                               onClick={() => openSaveRefModal(idx)}
@@ -2472,6 +2512,15 @@ export function PipelinePage() {
         onChange={handleCustomRefUpload}
       />
 
+      {/* ═══ 패널 이미지 직접 업로드용 hidden input ═══ */}
+      <input
+        type="file"
+        ref={panelUploadRef}
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={handlePanelImageUpload}
+      />
+
       {/* ═══ 이미지 라이트박스 팝업 ═══ */}
       {lightbox && (
         <div style={SLB.overlay} onClick={closeLightbox}>
@@ -2811,6 +2860,11 @@ const S = {
   panelGenBtn: {
     width: "100%", padding: "10px", background: "#2563eb", color: "white",
     border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "13px", fontWeight: "600",
+  } as const,
+  panelUploadBtn: {
+    padding: "10px 12px", background: "#f3f4f6", color: "#374151",
+    border: "1px solid #d1d5db", borderRadius: "8px", cursor: "pointer", fontSize: "14px",
+    lineHeight: 1,
   } as const,
 
   smallLabel: {
