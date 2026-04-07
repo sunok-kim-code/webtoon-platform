@@ -30,6 +30,7 @@ export type ArtStyleKey =
   | "darkFantasy"
   | "actionWebtoon"
   | "murimWebtoon"
+  | "watercolorWebtoon"
   | "custom";
 
 export const ART_STYLES: Record<ArtStyleKey, ArtStyleDef> = {
@@ -129,6 +130,13 @@ export const ART_STYLES: Record<ArtStyleKey, ArtStyleDef> = {
     loras: [
       { path: "https://huggingface.co/XLabs-AI/flux-lora-collection/resolve/main/anime_lora.safetensors", scale: 0.85 },
     ],
+  },
+  watercolorWebtoon: {
+    name: "수채화 웹툰",
+    prefix: "korean webtoon style, manhwa illustration, watercolor webtoon, soft watercolor painting, delicate thin linework, fine clean outlines, minimal line weight, soft watercolor texture, translucent watercolor washes, blended soft shading, smooth color gradients, painterly style, gentle edges, artistic digital watercolor, vibrant yet soft color palette, detailed yet soft facial features. ",
+    charSuffix: ", soft watercolor texture, delicate thin linework, translucent watercolor washes, blended soft shading, detailed yet soft facial features, vibrant yet soft color palette, high quality",
+    bgSuffix: ", soft watercolor painting, translucent watercolor washes, smooth color gradients, gentle edges, atmospheric watercolor background, high quality",
+    propSuffix: ", soft watercolor texture, delicate linework, gentle edges, watercolor object illustration",
   },
   custom: {
     name: "사용자 정의",

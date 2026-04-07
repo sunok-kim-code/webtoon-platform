@@ -170,7 +170,7 @@ export interface PanelPromptContext {
 export function applyPromptRules(ctx: PanelPromptContext): string {
 
   // ── 1. Style (고정) ──
-  const styleSection = "Style: korean webtoon style, manhwa illustration, watercolor webtoon, soft watercolor painting, delicate thin linework, fine clean outlines, minimal line weight, soft watercolor texture, translucent watercolor washes, blended soft shading, smooth color gradients, painterly style, gentle edges, artistic digital watercolor, vibrant yet soft color palette, detailed yet soft facial features.";
+  const styleSection = "Style: Webtoon style, clean lineart, flat color.";
 
   // ── 2. Setting (배경 + 조명 통합, 긍정형만) ──
   const lightingHint = buildLightingShort(ctx.timeLabel, ctx.moodLabel);

@@ -76,6 +76,13 @@ export const ART_STYLES: Record<string, ArtStylePreset> = {
     bgSuffix: ", deep muted sophisticated color tones, scene-mood-adaptive realistic lighting, emotional color filter when appropriate, natural highlights on metallic objects, detailed but grounded atmosphere",
     propSuffix: ", realistic material texture rendering, natural light highlights on metal and reflective surfaces, rich gradient shading, detailed craftsmanship",
   },
+  watercolorWebtoon: {
+    name: "수채화 웹툰",
+    prefix: "korean webtoon style, manhwa illustration, watercolor webtoon, soft watercolor painting, delicate thin linework, fine clean outlines, minimal line weight, soft watercolor texture, translucent watercolor washes, blended soft shading, smooth color gradients, painterly style, gentle edges, artistic digital watercolor, vibrant yet soft color palette, detailed yet soft facial features. ",
+    charSuffix: ", soft watercolor texture, delicate thin linework, translucent watercolor washes, blended soft shading, detailed yet soft facial features, vibrant yet soft color palette, high quality",
+    bgSuffix: ", soft watercolor painting, translucent watercolor washes, smooth color gradients, gentle edges, atmospheric watercolor background, high quality",
+    propSuffix: ", soft watercolor texture, delicate linework, gentle edges, watercolor object illustration",
+  },
   custom: {
     name: "사용자 정의",
     prefix: "",
