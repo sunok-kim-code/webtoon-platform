@@ -118,13 +118,32 @@ export const PROMPT_RULES: PromptRule[] = [
   },
 ];
 
+// ─── Subject 정보 (캐릭터별 개별 항목) ─────────────────────
+
+export interface SubjectInfo {
+  /** 캐릭터 이름 (영문 또는 한국어) */
+  name: string;
+  /** 성별: "Male" | "Female" */
+  gender?: string;
+  /** 의상 요약: "Suit", "White slip dress" 등 */
+  outfit?: string;
+  /** 현재 동작 묘사: "turning his body toward the entrance, holding a tablet PC" */
+  action?: string;
+  /** 위치/뷰: "foreground", "back view" 등 */
+  position?: string;
+  /** 표정/감정 (시각적): "wide eyes, surprised expression" */
+  expression?: string;
+  /** 의상 레퍼런스 태그 */
+  outfitRef?: string;
+}
+
 // ─── 패널 컨텍스트 (프롬프트 조립에 필요한 정보) ─────────────
 
 export interface PanelPromptContext {
-  /** 패널 씬 설명 (한국어) */
-  description: string;
-  /** 캐릭터 토큰 (예: "지호(기쁨, walking), 민지(슬픔)") */
+  /** 캐릭터 토큰 (레거시, Subject 방식에서는 사용 안 함) */
   charTokens: string;
+  /** Subject 배열 — 캐릭터별 구조화 정보 */
+  subjects: SubjectInfo[];
   /** 패널 장소 이름 */
   locationName: string;
   /** 시간대 라벨 (morning, afternoon 등) */
@@ -141,18 +160,6 @@ export interface PanelPromptContext {
   characterCount: number;
   /** 캐릭터별 앵글 정보 (back, side 등) */
   characterAngles?: Record<string, string>;
-
-  // ── 연속성 규칙용 (이전 패널 정보) ──
-  /** 이전 패널의 캐릭터 동작/포즈 요약 */
-  prevAction?: string;
-  /** 이전 패널의 캐릭터 상태 (표정, 자세, 위치 등) */
-  prevCharState?: string;
-  /** 이전 패널의 카메라 앵글 */
-  prevCameraAngle?: string;
-  /** 현재 씬 ID (같은 씬인지 판단용) */
-  sceneId?: string;
-  /** 이전 패널의 씬 ID */
-  prevSceneId?: string;
 }// ============================================================
 
 
@@ -161,227 +168,110 @@ export interface PanelPromptContext {
 // ══════════════════════════════════════════════════════════════
 
 export function applyPromptRules(ctx: PanelPromptContext): string {
-  const enabledRules = PROMPT_RULES.filter((r) => r.enabled);
-  const ruleIds = new Set(enabledRules.map((r) => r.id));
 
-  // ── Characters 섹션 ──
-  let charactersSection = ctx.charTokens
-    ? `Characters: ${ctx.charTokens}.`
-    : "";
+  // ── 1. Style (고정) ──
+  const styleSection = "Style: Webtoon style, clean lineart, flat color.";
 
-  // [visual_narrative] 뒷모습 캐릭터 → 신체 언어 힌트 추가
-  if (ruleIds.has("visual_narrative") && ctx.characterAngles) {
-    const backChars = Object.entries(ctx.characterAngles)
-      .filter(([_, angle]) => angle === "back")
-      .map(([name]) => name);
-    if (backChars.length > 0) {
-      charactersSection += ` (${backChars.join(", ")}: convey emotion through body language — shoulder tension, stride, posture — not facial expression.)`;
-    }
-  }
+  // ── 2. Setting (배경 + 조명 통합, 긍정형만) ──
+  const lightingHint = buildLightingShort(ctx.timeLabel, ctx.moodLabel);
+  const settingParts = [ctx.locationName];
+  if (ctx.timeLabel) settingParts.push(ctx.timeLabel);
+  if (lightingHint) settingParts.push(lightingHint);
+  const settingSection = `Setting: ${settingParts.join(", ")}.`;
 
-  // [emotion_appearance] 외형 변화로 감정 시각화 (추상적 감정 단어 배제)
-  if (ruleIds.has("emotion_appearance") && ctx.charTokens) {
-    charactersSection += " Visualize emotions through visual appearance changes (hair movement, clothing wrinkles, trembling hands, tear marks, clenched fists, drooping shoulders) — never use abstract emotion words.";
-  }
+  // ── 3. Camera (구도 명확화, 부가 설명 없음) ──
+  const cameraSection = `Camera: ${ctx.cameraAngle}.`;
 
-  // [ref_tags_in_characters] 캐릭터 의상 레퍼런스 태그 강제 삽입
-  if (ruleIds.has("ref_tags_in_characters") && ctx.refTags) {
-    // refTags에서 outfit 태그만 추출하여 Characters 섹션에 추가
-    const outfitTags = ctx.refTags.match(/ref:outfit\/[^\],\s]+/g);
-    if (outfitTags && outfitTags.length > 0) {
-      charactersSection += ` [${outfitTags.join(", ")}]`;
-    }
-  }
+  // ── 4. Subject N (캐릭터별 개별 항목 — 성별 태그 포함) ──
+  const subjectSections: string[] = [];
+  ctx.subjects.forEach((subj, i) => {
+    const tag = [subj.gender, subj.outfit].filter(Boolean).join(", ");
+    const label = tag ? `${subj.name} (${tag})` : subj.name;
 
-  // ── Setting 섹션 ──
-  let settingSection = `Setting: ${ctx.locationName}`;
-  if (ctx.timeLabel) settingSection += `, ${ctx.timeLabel}`;
-  if (ctx.moodLabel) settingSection += `, ${ctx.moodLabel}`;
-  settingSection += ".";
+    const details: string[] = [];
+    if (subj.action) details.push(subj.action);
+    if (subj.position) details.push(subj.position);
+    if (subj.expression) details.push(subj.expression);
 
-  // [single_point_setting] 단일 지점만 기술
-  if (ruleIds.has("single_point_setting")) {
-    settingSection += " (Single point only — do not include travel routes or multiple locations.)";
-  }
-
-  // ── Lighting 섹션 (lighting_details 규칙) ──
-  let lightingSection = "";
-  if (ruleIds.has("lighting_details")) {
-    lightingSection = buildLightingHint(ctx.timeLabel, ctx.moodLabel);
-  }
-
-  // ── Camera 섹션 ──
-  let cameraSection = `Camera: ${ctx.cameraAngle}.`;
-
-  // [camera_consistency] 같은 씬 내 카메라 앵글 일관성
-  if (
-    ruleIds.has("camera_consistency") &&
-    ctx.prevCameraAngle &&
-    ctx.sceneId &&
-    ctx.sceneId === ctx.prevSceneId
-  ) {
-    if (ctx.cameraAngle !== ctx.prevCameraAngle) {
-      cameraSection += ` (Intentional angle shift from ${ctx.prevCameraAngle} — maintain visual continuity.)`;
-    }
-  }
-
-  // ── Composition 섹션 ──
-  let compositionSection = "";
-  if (ctx.rawComposition) {
-    let comp = ctx.rawComposition;
-
-    // [no_redundancy] Characters 동작과 중복되는 내용 제거
-    if (ruleIds.has("no_redundancy")) {
-      comp = stripCharacterActions(comp, ctx.charTokens);
-      if (!comp.trim()) {
-        comp = `${ctx.cameraAngle} framing, character placement focus`;
-      }
+    // 뒷모습이면 body language 힌트 추가
+    const isBack = ctx.characterAngles?.[subj.name] === "back" ||
+                   subj.position?.includes("back view");
+    if (isBack) {
+      details.push("convey emotion through body language");
     }
 
-    // [spatial_depth] 캐릭터 2명 이상이면 depth 힌트 추가
-    if (ruleIds.has("spatial_depth") && ctx.characterCount >= 2) {
-      comp +=
-        ". Emphasize spatial depth between characters (foreground/background layering)";
-    }
+    const refTag = subj.outfitRef ? ` [${subj.outfitRef}]` : "";
+    const detailStr = details.length > 0 ? `: ${details.join(", ")}` : "";
+    subjectSections.push(`Subject ${i + 1}: ${label}${detailStr}.${refTag}`);
+  });
 
-    // [three_layer_composition] 전경/중경/후경 3단 레이어
-    if (ruleIds.has("three_layer_composition")) {
-      comp +=
-        ". Reinforce depth with three-layer composition: foreground, midground, background";
-    }
+  // ── 5. Depth (입체감 — 캐릭터 배치 포함) ──
+  let depthSection = "";
+  if (ctx.characterCount >= 2 && ctx.subjects.length >= 2) {
+    // Subject 정보에서 position 기반으로 레이어 배치 결정
+    const layers: string[] = [];
+    const fgChar = ctx.subjects.find(s => s.position?.includes("foreground"));
+    const mgChar = ctx.subjects.find(s => s.position?.includes("midground") || (!s.position?.includes("foreground") && !s.position?.includes("background")));
+    const bgChar = ctx.subjects.find(s => s.position?.includes("background"));
 
-    // [psychological_distance] 심리적 거리를 물리적 배치로 표현
-    if (ruleIds.has("psychological_distance") && ctx.characterCount >= 2) {
-      comp +=
-        ". Express psychological distance through physical placement (proximity, height difference)";
-    }
+    if (fgChar) layers.push(`foreground(${fgChar.name})`);
+    else layers.push(`foreground(${ctx.subjects[0].name})`);
 
-    compositionSection = `Composition: ${comp}.`;
-  } else if (ruleIds.has("spatial_depth") && ctx.characterCount >= 2) {
-    compositionSection = `Composition: ${ctx.cameraAngle} framing with spatial depth between characters (foreground/background layering).`;
+    if (mgChar && mgChar !== fgChar) layers.push(`midground(${mgChar.name})`);
+    else if (ctx.subjects.length > 1) layers.push(`midground(${ctx.subjects[1].name})`);
+
+    layers.push("background");
+    depthSection = `Depth: Three-layer composition: ${layers.join(", ")}.`;
+  } else if (ctx.characterCount === 1) {
+    depthSection = "Depth: Character focus with environmental background depth.";
   }
 
-  // ── Reference Tags 섹션 ──
-  const refSection = ctx.refTags || "";
+  // ── 6. Reference Tags (레퍼런스 이미지 참조) ──
+  const locRef = ctx.refTags || "";
 
-  // ── Continuity 섹션 (연속성 규칙) ──
-  let continuitySection = "";
-  const continuityParts: string[] = [];
-
-  // [action_anchoring] 이전 패널 동작 연속성
-  if (ruleIds.has("action_anchoring") && ctx.prevAction) {
-    continuityParts.push(
-      `Continuing from previous action: ${ctx.prevAction}`
-    );
-  }
-
-  // [state_change_description] 이전 패널 대비 상태 변화
-  if (ruleIds.has("state_change_description") && ctx.prevCharState) {
-    continuityParts.push(
-      `State change from previous panel: ${ctx.prevCharState}`
-    );
-  }
-
-  if (continuityParts.length > 0) {
-    continuitySection = `Continuity: ${continuityParts.join(". ")}.`;
-  }
-
-  // ── 최종 조립 ──
-  // ctx.description 제거 — Composition 섹션이 비주얼 행동 묘사를 전담하므로 중복 방지
+  // ── 최종 조립 — 긍정형만, 부정 지시어 없음, Continuity 없음 ──
   return [
-    `webtoon panel.`,
-    charactersSection,
+    styleSection,
     settingSection,
-    lightingSection,
     cameraSection,
-    compositionSection,
-    refSection,
-    continuitySection,
+    ...subjectSections,
+    depthSection,
+    locRef,
   ]
     .filter(Boolean)
     .join(" ");
 }
 
 // ══════════════════════════════════════════════════════════════
-// 여퍼 함수
+// 헬퍼 함수
 // ══════════════════════════════════════════════════════════════
 
-function buildLightingHint(timeLabel: string, moodLabel: string): string {
-  const timeLower = (timeLabel || "").toLowerCase();
-  const moodLower = (moodLabel || "").toLowerCase();
+/** Setting 섹션에 통합될 짧은 조명 힌트 (긍정형만) */
+function buildLightingShort(timeLabel: string, moodLabel: string): string {
+  const t = (timeLabel || "").toLowerCase();
+  const m = (moodLabel || "").toLowerCase();
 
-  let lighting = "Lighting:";
+  let light = "";
 
   // 시간대 기반
-  if (
-    timeLower.includes("morning") ||
-    timeLower === "아침" ||
-    timeLower === "오전"
-  ) {
-    lighting += " soft natural morning light with gentle warm tones";
-  } else if (
-    timeLower.includes("afternoon") ||
-    timeLower === "낮" ||
-    timeLower === "오후"
-  ) {
-    lighting += " bright natural daylight, overhead sun as primary light source";
-  } else if (
-    timeLower.includes("evening") ||
-    timeLower === "저녁" ||
-    timeLower === "석양"
-  ) {
-    lighting += " warm golden-hour light with long shadows";
-  } else if (
-    timeLower.includes("night") ||
-    timeLower === "밤" ||
-    timeLower === "야간"
-  ) {
-    lighting += " cool ambient night lighting, artificial light sources (streetlamps, neon, fluorescent)";
+  if (t.includes("morning") || t === "아침" || t === "오전") {
+    light = "soft natural light";
+  } else if (t.includes("afternoon") || t === "낮" || t === "오후") {
+    light = "bright natural daylight";
+  } else if (t.includes("evening") || t === "저녁" || t === "석양") {
+    light = "warm golden-hour light";
+  } else if (t.includes("night") || t === "밤" || t === "야간") {
+    light = "cool ambient night lighting";
   } else {
-    lighting += " natural ambient light";
+    light = "natural ambient light";
   }
 
-  // 분위기 기반 보정
-  if (moodLower === "warm" || moodLower === "따뜻") {
-    lighting += ", warm interior glow (incandescent / pendant lamp)";
-  } else if (moodLower === "cold" || moodLower === "차가운") {
-    lighting += ", cool blue-tinted fluorescent light";
-  } else if (moodLower === "tense" || moodLower === "긴장") {
-    lighting += ", harsh directional light with deep shadows";
-  } else if (moodLower === "dark" || moodLower === "어둠") {
-    lighting += ", dim low-key lighting";
-  } else if (moodLower === "peaceful" || moodLower === "평화") {
-    lighting += ", diffused soft light";
-  }
+  // 분위기 보정 (짧게)
+  if (m === "warm" || m === "따뜻") light += ", warm interior glow";
+  else if (m === "cold" || m === "차가운") light += ", cool fluorescent";
+  else if (m === "tense" || m === "긴장") light += ", harsh directional shadows";
+  else if (m === "dark" || m === "어둠") light += ", dim low-key";
+  else if (m === "peaceful" || m === "평화") light += ", soft diffused";
 
-  return lighting + ".";
-}
-
-function stripCharacterActions(
-  composition: string,
-  charTokens: string
-): string {
-  if (!charTokens) return composition;
-
-  const actionWords = charTokens
-    .replace(/[()]/g, " ")
-    .split(/[,\s]+/)
-    .map((w) => w.trim().toLowerCase())
-    .filter((w) => w.length > 2);
-
-  let result = composition;
-  for (const word of actionWords) {
-    const regex = new RegExp(`\\b${escapeRegex(word)}\\b`, "gi");
-    result = result.replace(regex, "");
-  }
-
-  return result
-    .replace(/,\s*,/g, ",")
-    .replace(/\s{2,}/g, " ")
-    .replace(/^[,\s]+|[,\s]+$/g, "")
-    .trim();
-}
-
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return light;
 }

@@ -28,7 +28,7 @@ import {
   type PanelType,
 } from "@/services/geminiService";
 import { ReferenceResolver, buildFallbackPrompt } from "@/services/referenceResolver";
-import { applyPromptRules, type PanelPromptContext } from "@/services/promptRules";
+import { applyPromptRules, type PanelPromptContext, type SubjectInfo } from "@/services/promptRules";
 import {
   figmaSyncFullEpisode,
   figmaBatchSync,
@@ -908,49 +908,74 @@ export function PipelinePage() {
       const latestChars = useReferenceStore.getState().characters;
       const latestOutfits = useReferenceStore.getState().outfits;
       const prompts: Record<number, string> = {};
-      // 연속성 추적용 변수
-      let prevAction = "";
-      let prevCharState = "";
-      let prevCameraAngle = "";
-      let prevSceneId = "";
 
       result.panels.forEach((panel, idx) => {
-        // 캐릭터 토큰: 이름 + 감정 + 행동만 — 외형/의상 설명은 레퍼런스 이미지가 담당
-        const charTokens = panel.characters
-          .map(name => {
-            const c = result.characters.find(ch => ch.name === name);
-            const emotion = c ? (EMOTION_LABELS[c.emotion] || c.emotion) : "";
-            const action = (c as any)?.action && (c as any).action !== "standing"
-              ? ACTION_LABELS[(c as any).action] || (c as any).action
-              : "";
-            const tags = [emotion, action].filter(Boolean).join(", ");
-            return tags ? `${name}(${tags})` : name;
-          })
-          .join(", ");
-
         // 패널별 장소 결정: panel.location → 대표 장소 fallback
         const panelLocName = panel.location || result.location.name;
         const panelLoc = (result as any).locations?.find((l: any) => l.name === panelLocName) || result.location;
         const timeLabel = TIME_LABELS[panelLoc.timeOfDay] || panelLoc.timeOfDay || "";
         const moodLabel = MOOD_LABELS[panelLoc.mood] || panelLoc.mood || "";
 
-        // 의상 레퍼런스 ID 목록 (텍스트 참조 — 실제 이미지는 referenceImageUrls로 전달)
-        const outfitRefs = panel.characters
-          .map(name => panel.characterOutfits?.[name])
-          .filter(Boolean)
-          .map(id => `ref:outfit/${id}`)
-          .join(", ");
+        // 의상 레퍼런스 ID 목록
         const locRef = `ref:location/${panelLocName.replace(/\s/g, "_")}`;
 
-        // 현재 패널의 씬 ID (씬 단위 분리에서 부여된 값)
-        const currentSceneId = (panel as any).sceneId || `scene_${idx}`;
+        // ── Subject 배열 구성 (캐릭터별 성별/의상/동작/위치) ──
+        const subjects: SubjectInfo[] = panel.characters.map((name) => {
+          const c = result.characters.find(ch => ch.name === name);
+          const emotion = c ? (EMOTION_LABELS[c.emotion] || c.emotion) : "";
+          const action = (c as any)?.action && (c as any).action !== "standing"
+            ? ACTION_LABELS[(c as any).action] || (c as any).action
+            : "";
 
-        // 프롬프트: 씬 행동 + 캐릭터(이름+감정) + 장소(시간/분위기) + 카메라
-        // description 대신 composition(대사/SFX 제거된 비주얼 텍스트) 사용
-        const visualDesc = (panel.composition || panel.description || "").trim();
+          // 성별: 레퍼런스 갤러리의 traits.gender
+          const regChar = latestChars.find(rc =>
+            rc.name === name || rc.name.includes(name) || name.includes(rc.name)
+          );
+          const gender = regChar?.traits?.gender
+            ? (regChar.traits.gender === "male" ? "Male" : regChar.traits.gender === "female" ? "Female" : "")
+            : "";
+
+          // 의상 라벨: outfitId에서 의상 특징 추출
+          const outfitId = panel.characterOutfits?.[name] || "";
+          const outfitLabel = outfitId
+            ? outfitId.split("_").slice(1).join(" ").replace(/_/g, " ")
+            : "";
+
+          // 위치/뷰: characterAngles 또는 composition에서 추출
+          const angle = (panel as any).characterAngles?.[name] || "";
+          const position = angle === "back" ? "back view" : "";
+
+          // 의상 레퍼런스 태그
+          const outfitRef = outfitId ? `ref:outfit/${outfitId}` : "";
+
+          return {
+            name,
+            gender,
+            outfit: outfitLabel ? outfitLabel.charAt(0).toUpperCase() + outfitLabel.slice(1) : "",
+            action: action || undefined,
+            position: position || undefined,
+            expression: emotion || undefined,
+            outfitRef: outfitRef || undefined,
+          };
+        });
+
+        // charTokens (레거시 호환)
+        const charTokens = subjects
+          .map(s => {
+            const tags = [s.expression, s.action].filter(Boolean).join(", ");
+            return tags ? `${s.name}(${tags})` : s.name;
+          })
+          .join(", ");
+
+        // 의상 레퍼런스 목록
+        const outfitRefs = subjects
+          .map(s => s.outfitRef)
+          .filter(Boolean)
+          .join(", ");
+
         const panelCtx: PanelPromptContext = {
-          description: visualDesc,
           charTokens,
+          subjects,
           locationName: panelLocName,
           timeLabel,
           moodLabel,
@@ -959,33 +984,8 @@ export function PipelinePage() {
           refTags: outfitRefs ? `[${outfitRefs}, ${locRef}]` : `[${locRef}]`,
           characterCount: panel.characters.length,
           characterAngles: (panel as any).characterAngles,
-          // ── 연속성 필드 ──
-          prevAction: idx > 0 ? prevAction : undefined,
-          prevCharState: idx > 0 ? prevCharState : undefined,
-          prevCameraAngle: idx > 0 ? prevCameraAngle : undefined,
-          sceneId: currentSceneId,
-          prevSceneId: idx > 0 ? prevSceneId : undefined,
         };
         prompts[idx] = applyPromptRules(panelCtx);
-
-        // 다음 패널을 위해 현재 패널 정보 저장
-        const currentAction = panel.characters
-          .map(name => {
-            const c = result.characters.find(ch => ch.name === name);
-            return c ? `${name}: ${(c as any)?.action || "standing"}` : "";
-          })
-          .filter(Boolean)
-          .join(", ");
-        prevAction = currentAction || panel.description.slice(0, 60);
-        prevCharState = panel.characters
-          .map(name => {
-            const c = result.characters.find(ch => ch.name === name);
-            return c ? `${name}(${c.emotion}, ${(c as any)?.action || "standing"})` : "";
-          })
-          .filter(Boolean)
-          .join(", ");
-        prevCameraAngle = panel.cameraAngle;
-        prevSceneId = currentSceneId;
       });
       setPanelPrompts(prompts);
       setCurrentStep("step2_storyboard");
