@@ -550,10 +550,17 @@ async function callVertexGeminiImage(
 
     if (response.status === 401 && attempt === 0) {
       console.warn("[VertexImage] 401 — 토큰 갱신 시도 중...");
+      const oldToken = accessToken;
       // 캐시 무효화 후 새 토큰 요청
       localStorage.removeItem("VERTEX_ACCESS_TOKEN");
-      accessToken = await fetchFreshToken();
+      try {
+        accessToken = await fetchFreshToken();
+      } catch {
+        accessToken = "";
+      }
       if (!accessToken || !accessToken.startsWith("ya29.")) {
+        // 갱신 실패 — 기존 토큰 복원 후 에러
+        if (oldToken) localStorage.setItem("VERTEX_ACCESS_TOKEN", oldToken);
         throw new Error("Vertex AI 토큰 자동 갱신 실패. gcloud auth print-access-token으로 새 토큰을 발급받아 VERTEX_ACCESS_TOKEN에 설정하세요.");
       }
       console.log("[VertexImage] 토큰 갱신 성공, 재시도...");
