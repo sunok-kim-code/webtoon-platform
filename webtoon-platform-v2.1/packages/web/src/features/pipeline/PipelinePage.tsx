@@ -302,10 +302,22 @@ function analyzeSceneLocally(sceneText: string): LocalAnalysis {
     // aiPrompt에 대사/SFX 제외, 순수 비주얼만
     const promptText = visualText || block.text;
 
+    // 캐릭터별 의상 ID 매칭 (갤러리 우선)
+    const charOutfits: Record<string, string> = {};
+    try {
+      const regOutfits = useReferenceStore.getState().outfits;
+      for (const cn of chars) {
+        // 해당 캐릭터의 갤러리 의상 중 첫 번째 매칭
+        const matched = regOutfits.find(o => o.id.startsWith(cn));
+        if (matched) charOutfits[cn] = matched.id;
+      }
+    } catch { /* store not available */ }
+
     panels.push({
       panelNumber: ++panelIdx,
       description: block.text,
       characters: chars,
+      characterOutfits: Object.keys(charOutfits).length > 0 ? charOutfits : undefined,
       cameraAngle: cameraAngles[panelIdx % cameraAngles.length],
       emotion: primaryEmotion,
       composition: visualText,
@@ -934,9 +946,10 @@ export function PipelinePage() {
         const currentSceneId = (panel as any).sceneId || `scene_${idx}`;
 
         // 프롬프트: 씬 행동 + 캐릭터(이름+감정) + 장소(시간/분위기) + 카메라
-        // 외형/의상 텍스트 설명 없음 — referenceImageUrls 의 이미지가 그 역할을 함
+        // description 대신 composition(대사/SFX 제거된 비주얼 텍스트) 사용
+        const visualDesc = (panel.composition || panel.description || "").trim();
         const panelCtx: PanelPromptContext = {
-          description: panel.description,
+          description: visualDesc,
           charTokens,
           locationName: panelLocName,
           timeLabel,
@@ -1873,8 +1886,14 @@ export function PipelinePage() {
                             )}
                             {/* 캐릭터 의상 레퍼런스 — ref:outfit/... 태그로 표시 */}
                             {(panel?.characters || []).map((cn: string) => {
-                              const outfitId = (panel as any).characterOutfits?.[cn];
-                              const outfitEntry = outfitId ? registeredOutfits.find(o => o.id === outfitId) : undefined;
+                              // 1. panel.characterOutfits에서 정확 매칭
+                              let outfitId = (panel as any).characterOutfits?.[cn];
+                              let outfitEntry = outfitId ? registeredOutfits.find(o => o.id === outfitId) : undefined;
+                              // 2. 정확 매칭 실패 시 갤러리에서 캐릭터 이름으로 퍼지 매칭
+                              if (!outfitEntry) {
+                                outfitEntry = registeredOutfits.find(o => o.id.startsWith(cn + "_") || o.id.startsWith(cn));
+                                if (outfitEntry) outfitId = outfitEntry.id;
+                              }
                               const outfitThumb = outfitEntry?.references?.[0]?.storageUrl;
                               const charThumb = refImages[`char_${cn}`];
                               const thumb = outfitThumb || charThumb;
@@ -1943,6 +1962,22 @@ export function PipelinePage() {
                             })()}
                           </div>
                         </div>
+
+                        {/* 대사/SFX 별도 표시 (이미지 프롬프트에 포함 안 됨) */}
+                        {(((panel as any).dialogues && (panel as any).dialogues.length > 0) || ((panel as any).sfx && (panel as any).sfx.length > 0)) && (
+                          <div style={{ marginTop: "8px", padding: "6px 8px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                            {(panel as any).dialogues?.map((d: any, di: number) => (
+                              <div key={`dlg_${di}`} style={{ fontSize: "12px", color: "#334155", marginBottom: "2px" }}>
+                                <span style={{ fontWeight: 600, color: "#2563eb" }}>💬 {d.character}:</span> {d.text}
+                              </div>
+                            ))}
+                            {(panel as any).sfx?.map((s: string, si: number) => (
+                              <div key={`sfx_${si}`} style={{ fontSize: "12px", color: "#dc2626", fontWeight: 700, fontStyle: "italic" }}>
+                                ✦ SFX: {s}
+                              </div>
+                            ))}
+                          </div>
+                        )}
 
                         <label style={{ ...S.smallLabel, marginTop: "12px" }}>AI 생성 프롬프트</label>
                         <textarea
@@ -2271,14 +2306,34 @@ export function PipelinePage() {
                           </div>
                         );
                       }
-                      // v2.1 기본: 추출된 대사 오버레이
-                      if (panelDialogues.length > 0) {
+                      // v2.1: panel.dialogues + panel.sfx 또는 extractDialogueHints 폴백
+                      const pDialogues = (panel as any).dialogues || [];
+                      const pSfx = (panel as any).sfx || [];
+                      const hasInlineData = pDialogues.length > 0 || pSfx.length > 0;
+                      const dialoguesToShow = hasInlineData ? pDialogues : panelDialogues.map((d: any) => ({ character: d.character, text: d.text }));
+                      const sfxToShow = pSfx;
+
+                      if (dialoguesToShow.length > 0 || sfxToShow.length > 0) {
                         return (
                           <div style={S3.dialogueOverlay}>
-                            {panelDialogues.map((d, di) => (
-                              <div key={di} style={S3.speechBubble}>
+                            {dialoguesToShow.map((d: any, di: number) => (
+                              <div key={`dlg_${di}`} style={S3.speechBubble}>
                                 <span style={S3.speechCharName}>{d.character}</span>
                                 <span style={S3.speechText}>{d.text}</span>
+                              </div>
+                            ))}
+                            {sfxToShow.map((s: string, si: number) => (
+                              <div key={`sfx_${si}`} style={{
+                                fontFamily: "'Nanum Brush Script', 'Black Han Sans', cursive",
+                                fontWeight: 900,
+                                fontSize: "18px",
+                                color: "#dc2626",
+                                textShadow: "-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff",
+                                textAlign: "center" as const,
+                                padding: "2px 6px",
+                                letterSpacing: "2px",
+                              }}>
+                                {s}
                               </div>
                             ))}
                           </div>
