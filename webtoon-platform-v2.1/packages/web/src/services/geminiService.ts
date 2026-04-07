@@ -131,7 +131,10 @@ const VERTEX_MODEL = "gemini-2.0-flash-001";       // Vertex AI 모델 ID
 const AI_STUDIO_MODEL = "gemini-2.5-flash";         // Google AI Studio 모델 ID
 
 function getSelectedModel(): GeminiModelId {
-  return (localStorage.getItem("GEMINI_MODEL") as GeminiModelId) || "gemini-2.5-flash";
+  const saved = localStorage.getItem("GEMINI_MODEL") as GeminiModelId;
+  // 삭제된 모델(Claude 등)이 저장돼있으면 기본값으로 폴백
+  const valid = GEMINI_MODELS.some(m => m.id === saved);
+  return valid ? saved : "gemini-2.5-flash";
 }
 
 function getVertexConfig() {
@@ -169,14 +172,9 @@ function getKieEndpoint(modelId: GeminiModelId): string {
 type AuthMode = "kie-ai" | "ai-studio" | "vertex-ai" | "none";
 
 function detectAuthMode(): AuthMode {
-  const model = getSelectedModel();
-  const modelOption = GEMINI_MODELS.find(m => m.id === model);
-
-  // Kie.ai Gemini 모델
-  if (modelOption?.provider === "kie") {
-    const kieKey = getKieApiKey();
-    if (kieKey && kieKey.length > 10) return "kie-ai";
-  }
+  // Kie.ai API Key가 있으면 kie-ai (에피소드 분석은 gemini-3-pro 고정이므로)
+  const kieKey = getKieApiKey();
+  if (kieKey && kieKey.length > 10) return "kie-ai";
 
   // Google AI Studio
   const apiKey = getGeminiApiKey();
