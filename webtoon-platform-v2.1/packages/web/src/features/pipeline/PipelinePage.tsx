@@ -42,6 +42,7 @@ import {
   type KieTaskState,
 } from "@/services/kieImageService";
 import { firebaseService, getFirebaseConfig, ensureFirebaseReady } from "@/services";
+import { uploadImage } from "@/services/firebase";
 
 // ─── LocalAnalysis 타입 (GeminiSceneAnalysis와 동일 구조) ──
 type LocalAnalysis = GeminiSceneAnalysis;
@@ -72,6 +73,7 @@ interface PipelineSaveData {
   panelPrompts: Record<number, string>;
   generatedImages: Record<number, string>;
   refImages: Record<string, string>;
+  panelCustomRefs?: Record<number, string[]>;
   savedAt: number;
 }
 
@@ -178,6 +180,13 @@ export function PipelinePage() {
   const [generatingRefKey, setGeneratingRefKey] = useState<string | null>(null);
   const [isGeneratingAllRefs, setIsGeneratingAllRefs] = useState(false);
 
+  // 패널별 커스텀 레퍼런스 이미지 (이전 패널 선택 / 업로드)
+  const [panelCustomRefs, setPanelCustomRefs] = useState<Record<number, string[]>>({});
+  const [customRefPickerPanel, setCustomRefPickerPanel] = useState<number | null>(null);
+  const [isUploadingRef, setIsUploadingRef] = useState(false);
+  const customRefFileInput = useRef<HTMLInputElement | null>(null);
+  const customRefTargetPanel = useRef<number>(-1);
+
   // v1.0 말풍선/나래이션/효과음 데이터 (마이그레이션 시 보존)
   const [v1BubblesByPanel, setV1BubblesByPanel] = useState<Record<number, any[]>>({});
   const [v1PageSize, setV1PageSize] = useState<{ w: number; h: number }>({ w: 800, h: 1067 });
@@ -273,6 +282,7 @@ export function PipelinePage() {
         if (saved.panelPrompts && Object.keys(saved.panelPrompts).length > 0) setPanelPrompts(saved.panelPrompts);
         if (saved.generatedImages && Object.keys(saved.generatedImages).length > 0) setGeneratedImages(saved.generatedImages);
         if (saved.refImages && Object.keys(saved.refImages).length > 0) setRefImages(saved.refImages);
+        if (saved.panelCustomRefs && Object.keys(saved.panelCustomRefs).length > 0) setPanelCustomRefs(saved.panelCustomRefs);
         // v1.0 말풍선 데이터 복원
         if ((saved as any).v1BubblesByPanel) {
           setV1BubblesByPanel((saved as any).v1BubblesByPanel);
@@ -387,6 +397,7 @@ export function PipelinePage() {
           panelPrompts,
           generatedImages,
           refImages,
+          panelCustomRefs,
         } as any);
         setSceneTextSaveStatus("saved");
       } catch (_) {
@@ -411,6 +422,7 @@ export function PipelinePage() {
         panelPrompts,
         generatedImages,
         refImages,
+        panelCustomRefs,
       };
       // v1.0 말풍선 데이터 보존
       if (Object.keys(v1BubblesByPanel).length > 0) {
@@ -422,7 +434,7 @@ export function PipelinePage() {
       savePipelineToFirebase(projectId, episodeId, saveData as any);
     }, 2000);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, [dataLoaded, analysis, editingPanels, panelPrompts, generatedImages, refImages, sceneText, analysisMode, projectId, episodeId, v1BubblesByPanel, v1PageSize, v1PageSizeByPanel]);
+  }, [dataLoaded, analysis, editingPanels, panelPrompts, generatedImages, refImages, panelCustomRefs, sceneText, analysisMode, projectId, episodeId, v1BubblesByPanel, v1PageSize, v1PageSizeByPanel]);
 
   const geminiReady = isGeminiConfigured();
   const kieReady = isKieImageConfigured();
@@ -905,6 +917,56 @@ export function PipelinePage() {
     setIsGeneratingAllRefs(false);
   }, [kieReady, analysis, refImages, generateRefImage]);
 
+  // ── 커스텀 레퍼런스: 이전 패널 선택 ──
+  const addPrevPanelAsRef = useCallback((targetIdx: number, sourceIdx: number) => {
+    const url = generatedImages[sourceIdx];
+    if (!url) return;
+    setPanelCustomRefs(prev => {
+      const existing = prev[targetIdx] || [];
+      if (existing.includes(url)) return prev; // 중복 방지
+      return { ...prev, [targetIdx]: [...existing, url] };
+    });
+    setCustomRefPickerPanel(null);
+  }, [generatedImages]);
+
+  // ── 커스텀 레퍼런스: 이미지 업로드 ──
+  const handleCustomRefUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const targetIdx = customRefTargetPanel.current;
+    if (!file || targetIdx < 0) return;
+    e.target.value = ""; // 동일 파일 재업로드 허용
+
+    setIsUploadingRef(true);
+    try {
+      const path = `pipeline/${projectId || "default"}/${episodeId || "default"}/custom_refs/panel_${targetIdx}_${Date.now()}.${file.name.split(".").pop()}`;
+      const url = await uploadImage(path, file);
+      setPanelCustomRefs(prev => {
+        const existing = prev[targetIdx] || [];
+        return { ...prev, [targetIdx]: [...existing, url] };
+      });
+      console.log(`[Panel ${targetIdx}] Custom ref uploaded: ${url}`);
+    } catch (err: any) {
+      console.error(`[Panel ${targetIdx}] Custom ref upload failed:`, err);
+      alert("이미지 업로드에 실패했습니다: " + err.message);
+    } finally {
+      setIsUploadingRef(false);
+      setCustomRefPickerPanel(null);
+    }
+  }, [projectId, episodeId]);
+
+  // ── 커스텀 레퍼런스: 제거 ──
+  const removeCustomRef = useCallback((panelIdx: number, refUrl: string) => {
+    setPanelCustomRefs(prev => {
+      const existing = prev[panelIdx] || [];
+      const updated = existing.filter(u => u !== refUrl);
+      if (updated.length === 0) {
+        const { [panelIdx]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [panelIdx]: updated };
+    });
+  }, []);
+
   // ── 단일 패널 이미지 생성 (Reference Resolver + Context Chain 연동) ──
   const generatePanelImage = useCallback(async (idx: number) => {
     if (!kieReady) {
@@ -960,20 +1022,26 @@ export function PipelinePage() {
       }
     }
 
-    // ── 레퍼런스 이미지 URL 수집 (이전 패널 + 캐릭터/장소 레퍼런스) ──
+    // ── 레퍼런스 이미지 URL 수집 (커스텀 + 이전 패널 + 캐릭터/장소 레퍼런스) ──
     const referenceImageUrls: string[] = [];
 
-    // 1) 이전 패널 이미지 (시각적 일관성 — 최우선)
+    // 0) 커스텀 레퍼런스 (사용자가 직접 선택/업로드 — 최우선)
+    const customRefs = panelCustomRefs[idx] || [];
+    for (const cUrl of customRefs) {
+      if (cUrl.startsWith("http") && !referenceImageUrls.includes(cUrl)) {
+        referenceImageUrls.push(cUrl);
+      }
+    }
+
+    // 1) 이전 패널 이미지 (시각적 일관성 — 커스텀과 중복 제외)
     if (idx > 0) {
-      // 바로 직전 패널
       const prevImg = generatedImages[idx - 1];
-      if (prevImg && prevImg.startsWith("http")) {
+      if (prevImg && prevImg.startsWith("http") && !referenceImageUrls.includes(prevImg)) {
         referenceImageUrls.push(prevImg);
       }
-      // 2칸 전 패널 (장면 흐름 유지)
       if (idx > 1) {
         const prev2Img = generatedImages[idx - 2];
-        if (prev2Img && prev2Img.startsWith("http")) {
+        if (prev2Img && prev2Img.startsWith("http") && !referenceImageUrls.includes(prev2Img)) {
           referenceImageUrls.push(prev2Img);
         }
       }
@@ -1078,7 +1146,7 @@ export function PipelinePage() {
     } finally {
       setGeneratingIndex(null);
     }
-  }, [panelPrompts, editingPanels, kieReady, analysis, episodeId, projectId, registeredChars, registeredLocs, registeredOutfits, generatedImages, refImages, artStyleKey]);
+  }, [panelPrompts, editingPanels, kieReady, analysis, episodeId, projectId, registeredChars, registeredLocs, registeredOutfits, generatedImages, refImages, artStyleKey, panelCustomRefs]);
 
   // ── 전체 패널 순차 생성 ──
   const generateAllPanels = useCallback(async () => {
@@ -1680,6 +1748,101 @@ export function PipelinePage() {
                                 </div>
                               ) : null;
                             })()}
+                            {/* 커스텀 레퍼런스 썸네일 */}
+                            {(panelCustomRefs[idx] || []).map((cUrl, ci) => (
+                              <div
+                                key={`cref_${ci}`}
+                                style={{ ...S.refThumbItem, borderColor: "#10B981", background: "#ECFDF5" }}
+                                title="커스텀 레퍼런스"
+                              >
+                                <img src={cUrl} alt={`Custom ref ${ci + 1}`} style={S.refThumbImg} onClick={() => openLightbox(cUrl, `커스텀 레퍼런스 ${ci + 1}`)} />
+                                <span style={S.refThumbLabel}>커스텀{ci + 1}</span>
+                                <button
+                                  onClick={e => { e.stopPropagation(); removeCustomRef(idx, cUrl); }}
+                                  style={{ ...S.refStripSwap, color: "#EF4444" }}
+                                  title="제거"
+                                >✕</button>
+                              </div>
+                            ))}
+                            {/* + 버튼: 커스텀 레퍼런스 추가 */}
+                            <div style={{ position: "relative" }}>
+                              <div
+                                style={{
+                                  ...S.refThumbItem,
+                                  borderColor: "#D1D5DB",
+                                  borderStyle: "dashed",
+                                  background: "#F9FAFB",
+                                  cursor: "pointer",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                }}
+                                onClick={() => setCustomRefPickerPanel(customRefPickerPanel === idx ? null : idx)}
+                                title="레퍼런스 추가 (이전 패널 선택 / 이미지 업로드)"
+                              >
+                                <span style={{ fontSize: "20px", color: "#9CA3AF", lineHeight: 1 }}>+</span>
+                                <span style={{ fontSize: "9px", color: "#9CA3AF", marginTop: "2px" }}>추가</span>
+                              </div>
+                              {/* 드롭다운 피커 */}
+                              {customRefPickerPanel === idx && (
+                                <div style={{
+                                  position: "absolute", top: "100%", left: 0, zIndex: 50,
+                                  background: "#fff", border: "1px solid #E5E7EB", borderRadius: "8px",
+                                  boxShadow: "0 4px 12px rgba(0,0,0,0.15)", padding: "8px", minWidth: "180px",
+                                  maxHeight: "260px", overflowY: "auto",
+                                }}>
+                                  <div style={{ fontSize: "11px", fontWeight: 700, color: "#374151", marginBottom: "6px" }}>이전 패널 선택</div>
+                                  {idx === 0 ? (
+                                    <div style={{ fontSize: "11px", color: "#9CA3AF", padding: "4px 0" }}>이전 패널 없음</div>
+                                  ) : (
+                                    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginBottom: "8px" }}>
+                                      {Array.from({ length: idx }, (_, i) => i).map(pi => (
+                                        <div
+                                          key={`pick_${pi}`}
+                                          onClick={() => generatedImages[pi] ? addPrevPanelAsRef(idx, pi) : undefined}
+                                          style={{
+                                            width: "48px", height: "48px", borderRadius: "4px", overflow: "hidden",
+                                            border: generatedImages[pi] ? "2px solid #2563EB" : "1px solid #E5E7EB",
+                                            cursor: generatedImages[pi] ? "pointer" : "not-allowed",
+                                            opacity: generatedImages[pi] ? 1 : 0.4,
+                                            position: "relative",
+                                          }}
+                                          title={generatedImages[pi] ? `Panel ${pi + 1} 선택` : `Panel ${pi + 1} (이미지 없음)`}
+                                        >
+                                          {generatedImages[pi] ? (
+                                            <img src={generatedImages[pi]} alt={`P${pi + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                          ) : (
+                                            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#F3F4F6", fontSize: "10px", color: "#9CA3AF" }}>
+                                              {pi + 1}
+                                            </div>
+                                          )}
+                                          <span style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,0.5)", color: "#fff", fontSize: "8px", textAlign: "center", lineHeight: "14px" }}>
+                                            P{pi + 1}
+                                          </span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  <div style={{ borderTop: "1px solid #E5E7EB", paddingTop: "6px" }}>
+                                    <button
+                                      onClick={() => {
+                                        customRefTargetPanel.current = idx;
+                                        customRefFileInput.current?.click();
+                                      }}
+                                      disabled={isUploadingRef}
+                                      style={{
+                                        width: "100%", padding: "6px 8px", fontSize: "11px", fontWeight: 600,
+                                        background: "#F3F4F6", border: "1px solid #D1D5DB", borderRadius: "4px",
+                                        cursor: isUploadingRef ? "not-allowed" : "pointer", color: "#374151",
+                                      }}
+                                    >
+                                      {isUploadingRef ? "업로드 중..." : "이미지 업로드"}
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
 
@@ -2192,6 +2355,23 @@ export function PipelinePage() {
           </div>
         </div>
       )}
+
+      {/* ═══ 커스텀 레퍼런스 피커 백드롭 (외부 클릭 시 닫기) ═══ */}
+      {customRefPickerPanel !== null && (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 40 }}
+          onClick={() => setCustomRefPickerPanel(null)}
+        />
+      )}
+
+      {/* ═══ 커스텀 레퍼런스 이미지 업로드용 hidden input ═══ */}
+      <input
+        type="file"
+        ref={customRefFileInput}
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={handleCustomRefUpload}
+      />
 
       {/* ═══ 이미지 라이트박스 팝업 ═══ */}
       {lightbox && (
