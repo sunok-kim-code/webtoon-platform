@@ -1119,3 +1119,73 @@ export async function generateImage(
 
   throw lastError || new Error("이미지 생성 실패");
 }
+
+// ══════════════════════════════════════════════════════════════
+// Vertex AI 배치(Batch) 이미지 생성 — 여러 패널을 동시에 생성
+// ══════════════════════════════════════════════════════════════
+
+export interface BatchPanelRequest {
+  idx: number;
+  prompt: string;
+  sizeKey: string;
+  referenceImageUrls?: string[];
+}
+
+export interface BatchPanelResult {
+  idx: number;
+  imageUrl?: string;
+  error?: string;
+}
+
+/**
+ * Vertex AI를 이용해 여러 패널 이미지를 동시에 생성합니다.
+ * concurrency 파라미터로 동시 요청 수를 제어합니다 (Vertex AI 쿼터 고려).
+ */
+export async function generateVertexBatch(
+  panels: BatchPanelRequest[],
+  options?: {
+    concurrency?: number;
+    onProgress?: (completed: number, total: number, idx: number, success: boolean) => void;
+  },
+): Promise<BatchPanelResult[]> {
+  const concurrency = options?.concurrency || 3;
+  const results: BatchPanelResult[] = [];
+  let completed = 0;
+
+  // 세마포어 기반 동시성 제어
+  const queue = [...panels];
+  const workers: Promise<void>[] = [];
+
+  for (let w = 0; w < Math.min(concurrency, queue.length); w++) {
+    workers.push(
+      (async () => {
+        while (queue.length > 0) {
+          const panel = queue.shift();
+          if (!panel) break;
+
+          try {
+            const { imageUrl } = await callVertexGeminiImage(
+              sanitizePromptForNSFW(panel.prompt),
+              panel.sizeKey,
+              panel.referenceImageUrls,
+            );
+            results.push({ idx: panel.idx, imageUrl });
+            completed++;
+            options?.onProgress?.(completed, panels.length, panel.idx, true);
+          } catch (err: any) {
+            results.push({ idx: panel.idx, error: err.message || "Unknown error" });
+            completed++;
+            options?.onProgress?.(completed, panels.length, panel.idx, false);
+            console.error(`[VertexBatch] Panel ${panel.idx} failed:`, err.message);
+          }
+        }
+      })()
+    );
+  }
+
+  await Promise.all(workers);
+
+  // idx 순으로 정렬
+  results.sort((a, b) => a.idx - b.idx);
+  return results;
+}

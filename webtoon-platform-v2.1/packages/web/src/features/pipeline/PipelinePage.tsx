@@ -39,7 +39,9 @@ import {
   getSelectedImageModel,
   setSelectedImageModel,
   KIE_IMAGE_MODELS,
+  generateVertexBatch,
   type KieTaskState,
+  type BatchPanelRequest,
 } from "@/services/kieImageService";
 import { firebaseService, getFirebaseConfig, ensureFirebaseReady } from "@/services";
 import { uploadImage } from "@/services/firebase";
@@ -1112,22 +1114,17 @@ export function PipelinePage() {
     return panelExcludedRefs[panelIdx]?.has(refKey) ?? false;
   }, [panelExcludedRefs]);
 
-  // ── 단일 패널 이미지 생성 (Reference Resolver + Context Chain 연동) ──
-  const generatePanelImage = useCallback(async (idx: number) => {
-    if (!kieReady) {
-      alert("Kie API Key가 필요합니다. 설정에서 KIE_API_KEY를 입력하세요.");
-      return;
-    }
+  // ── 패널 프롬프트 + 레퍼런스 URL 준비 (공용 함수) ──
+  const preparePanelData = useCallback((idx: number): { prompt: string; referenceImageUrls: string[] } | null => {
     const panel = editingPanels[idx];
     let prompt = panelPrompts[idx] || panel?.aiPrompt || panel?.description;
-    if (!prompt) return;
+    if (!prompt) return null;
 
     // ── 규칙1: 스타일 통일 — 선택된 아트 스타일 적용, 충돌 스타일 제거 ──
     const artStyle = ART_STYLES[artStyleKey];
     if (artStyle?.prefix && !prompt.startsWith(artStyle.prefix)) {
-      // 기존 프롬프트 내 충돌 스타일 키워드 제거 (혼합 렌더링 방지)
       const conflictPatterns = [
-        /\bStyle:\s*[^.]*\.\s*/gi,  // "Style: ..." 섹션 제거 (promptRules가 생성한 기본 스타일)
+        /\bStyle:\s*[^.]*\.\s*/gi,
         /\bNO mixed rendering techniques\.?\s*/gi,
       ];
       for (const pat of conflictPatterns) {
@@ -1145,127 +1142,93 @@ export function PipelinePage() {
         contextChainRef.current,
         store.outfits
       );
-      // 패널 캐릭터의 현재 의상 결정
       const panelCharAnalysis = analysis.characters.find(c => panel.characters.includes(c.name));
       const panelOutfit = panelCharAnalysis?.outfit || undefined;
-
       const panelLocName = panel.location || analysis.location.name;
       const panelLoc = (analysis as any).locations?.find((l: any) => l.name === panelLocName) || analysis.location;
       const resolved = currentResolver.resolve({
-        characters: panel.characters,
-        emotion: panel.emotion,
-        outfit: panelOutfit,
-        location: panelLocName,
-        timeOfDay: panelLoc.timeOfDay,
-        mood: panelLoc.mood,
-        currentEpisode: episodeId || "",
-        currentPanel: idx,
+        characters: panel.characters, emotion: panel.emotion, outfit: panelOutfit,
+        location: panelLocName, timeOfDay: panelLoc.timeOfDay, mood: panelLoc.mood,
+        currentEpisode: episodeId || "", currentPanel: idx,
       });
-
-      // 의상 텍스트 프롬프트 보강 생략:
-      // 캐릭터+의상 레퍼런스 이미지(referenceImageUrls)가 외형을 담당하므로
-      // 텍스트에 의상 설명을 중복 기재하면 AI가 혼동할 수 있음.
-
       if (resolved.length > 0) {
         const refLabels = resolved.map(r => r.label).join(", ");
-        if (!prompt.includes("[References:")) {
-          prompt += `\n\n[References: ${refLabels}]`;
-        }
-        console.log(`[Panel ${idx}] Resolved ${resolved.length} references (outfit: ${panelOutfit || "none"}): ${refLabels}`);
+        if (!prompt.includes("[References:")) prompt += `\n\n[References: ${refLabels}]`;
       }
     }
 
-    // ── 레퍼런스 이미지 URL 수집 (커스텀 + 이전 패널 + 캐릭터/장소 레퍼런스) ──
+    // ── 레퍼런스 이미지 URL 수집 ──
     const referenceImageUrls: string[] = [];
-
-    // 0) 커스텀 레퍼런스 (사용자가 직접 선택/업로드 — 최우선)
     const customRefs = panelCustomRefs[idx] || [];
     for (const cUrl of customRefs) {
-      if (cUrl.startsWith("http") && !referenceImageUrls.includes(cUrl)) {
-        referenceImageUrls.push(cUrl);
-      }
+      if (cUrl.startsWith("http") && !referenceImageUrls.includes(cUrl)) referenceImageUrls.push(cUrl);
     }
-
-    // 1) 이전 패널 이미지 (시각적 일관성 — 커스텀과 중복 제외, 제외된 레퍼런스 스킵)
     const excluded = panelExcludedRefs[idx];
     if (idx > 0 && !excluded?.has("prev")) {
       const prevImg = generatedImages[idx - 1];
-      if (prevImg && prevImg.startsWith("http") && !referenceImageUrls.includes(prevImg)) {
-        referenceImageUrls.push(prevImg);
-      }
+      if (prevImg && prevImg.startsWith("http") && !referenceImageUrls.includes(prevImg)) referenceImageUrls.push(prevImg);
       if (idx > 1) {
         const prev2Img = generatedImages[idx - 2];
-        if (prev2Img && prev2Img.startsWith("http") && !referenceImageUrls.includes(prev2Img)) {
-          referenceImageUrls.push(prev2Img);
-        }
+        if (prev2Img && prev2Img.startsWith("http") && !referenceImageUrls.includes(prev2Img)) referenceImageUrls.push(prev2Img);
       }
     }
-
-    // 2) 캐릭터 의상 레퍼런스 이미지 (제외된 레퍼런스 스킵)
     if (analysis && panel) {
       for (const charName of panel.characters) {
         if (excluded?.has(`char_${charName}`)) continue;
         let outfitRefAdded = false;
-
-        // 2a) panel.characterOutfits에서 정확 매칭
         let outfitId = (panel as any).characterOutfits?.[charName];
         let outfitEntry = outfitId ? registeredOutfits.find(o => o.id === outfitId) : undefined;
-
-        // 2b) 정확 매칭 실패 → 갤러리에서 캐릭터 이름으로 퍼지 매칭
         if (!outfitEntry) {
           outfitEntry = registeredOutfits.find(o => o.id.startsWith(charName + "_") || o.id.startsWith(charName));
           if (outfitEntry) outfitId = outfitEntry.id;
         }
-
-        // 2c) 의상 엔트리에서 레퍼런스 이미지 추출
         if (outfitEntry?.references?.length) {
           const best = [...outfitEntry.references].sort((a, b) => (b.quality || 0) - (a.quality || 0))[0];
           if (best?.storageUrl?.startsWith("http") && !referenceImageUrls.includes(best.storageUrl)) {
             referenceImageUrls.push(best.storageUrl);
             outfitRefAdded = true;
-            console.log(`[Panel ${idx}] Outfit ref: ${outfitId} → ${best.storageUrl}`);
           }
         }
-
-        // 2d) 파이프라인 생성 레퍼런스 이미지 (fallback)
         if (!outfitRefAdded) {
           const charRefImg = refImages[`char_${charName}`];
-          if (charRefImg && charRefImg.startsWith("http") && !referenceImageUrls.includes(charRefImg)) {
-            referenceImageUrls.push(charRefImg);
-          }
+          if (charRefImg && charRefImg.startsWith("http") && !referenceImageUrls.includes(charRefImg)) referenceImageUrls.push(charRefImg);
         }
       }
     }
-
-    // 3) 장소 레퍼런스 이미지 (파이프라인 생성 → 갤러리 fallback, 제외된 레퍼런스 스킵)
     if (analysis) {
       const panelLocName = panel?.location || analysis.location.name;
       if (!excluded?.has(`loc_${panelLocName}`)) {
         let locRefImg = refImages[`loc_${panelLocName}`] || refImages[`loc_${analysis.location.name}`];
-
-        // 갤러리에 등록된 장소 레퍼런스 fallback
         if (!locRefImg) {
           const regLoc = registeredLocs.find(l => l.name === panelLocName)
             || registeredLocs.find(l => l.name === analysis.location.name);
           locRefImg = (regLoc as any)?.references?.[0]?.storageUrl;
         }
-
-        if (locRefImg && locRefImg.startsWith("http") && !referenceImageUrls.includes(locRefImg)) {
-          referenceImageUrls.push(locRefImg);
-        }
+        if (locRefImg && locRefImg.startsWith("http") && !referenceImageUrls.includes(locRefImg)) referenceImageUrls.push(locRefImg);
       }
     }
-
-    // 최대 4개 레퍼런스 이미지 (API 제한 고려)
     const finalRefUrls = referenceImageUrls.slice(0, 4);
 
-    // 이전 패널 참조 시 프롬프트에 일관성 지시 추가
     if (idx > 0 && generatedImages[idx - 1]) {
       prompt += "\n\n[STYLE LOCK] Maintain IDENTICAL art style across all panels: same linework weight, color palette, shading technique, skin rendering, background detail level. Every panel must look like the same artist drew it in one session.";
       prompt += "\nDo NOT render any text, letters, words, sound effects, onomatopoeia, or speech bubbles in the image.";
     }
 
-    console.log(`[Panel ${idx}] Reference images: total=${finalRefUrls.length}, custom=${customRefs.length}, prev=${idx > 0 && generatedImages[idx-1] ? 'yes' : 'no'}, chars=${panel?.characters?.length || 0}, loc=${analysis?.location?.name || 'none'}`, finalRefUrls);
+    return { prompt, referenceImageUrls: finalRefUrls };
+  }, [editingPanels, panelPrompts, artStyleKey, analysis, episodeId, registeredChars, registeredLocs, registeredOutfits, generatedImages, refImages, panelCustomRefs, panelExcludedRefs]);
+
+  // ── 단일 패널 이미지 생성 (preparePanelData + Context Chain 연동) ──
+  const generatePanelImage = useCallback(async (idx: number) => {
+    if (!kieReady) {
+      alert("Kie API Key가 필요합니다. 설정에서 KIE_API_KEY를 입력하세요.");
+      return;
+    }
+    const data = preparePanelData(idx);
+    if (!data) return;
+    const { prompt, referenceImageUrls: finalRefUrls } = data;
+    const panel = editingPanels[idx];
+
+    console.log(`[Panel ${idx}] Refs: ${finalRefUrls.length}`, finalRefUrls);
 
     setGeneratingIndex(idx);
     setGenProgress(prev => ({ ...prev, [idx]: "대기 중..." }));
@@ -1298,20 +1261,13 @@ export function PipelinePage() {
           registeredOutfits
         );
         const updatedChain = currentResolver.updateContextChain(
-          episodeId || "",
-          idx,
-          panelResult,
-          panel.characters,
-          analysis.location.name
+          episodeId || "", idx, panelResult, panel.characters, analysis.location.name
         );
         contextChainRef.current = updatedChain;
-
-        // Firebase에 Context Chain 저장 (비동기)
         if (projectId && episodeId) {
           firebaseService.saveContextChain(projectId, episodeId, updatedChain)
             .catch(e => console.error("[Pipeline] Context chain save error:", e));
         }
-        console.log(`[Panel ${idx}] Context chain updated: ${updatedChain.scenes.length} scenes`);
       }
     } catch (err: any) {
       console.error(`[Panel ${idx}] 생성 실패:`, err);
@@ -1319,24 +1275,79 @@ export function PipelinePage() {
     } finally {
       setGeneratingIndex(null);
     }
-  }, [panelPrompts, editingPanels, kieReady, analysis, episodeId, projectId, registeredChars, registeredLocs, registeredOutfits, generatedImages, refImages, artStyleKey, panelCustomRefs, panelExcludedRefs]);
+  }, [preparePanelData, editingPanels, kieReady, analysis, episodeId, projectId, registeredChars, registeredLocs, registeredOutfits]);
 
-  // ── 전체 패널 순차 생성 ──
+  // ── 전체 패널 생성 (Vertex AI: 배치 병렬 / 기타: 순차) ──
   const generateAllPanels = useCallback(async () => {
     if (!kieReady) {
       alert("Kie API Key가 필요합니다. 설정에서 KIE_API_KEY를 입력하세요.");
       return;
     }
     setIsGeneratingAll(true);
+
+    // 생성할 패널 인덱스 필터
+    const targetIndices: number[] = [];
     for (let i = 0; i < editingPanels.length; i++) {
-      // narration/skip 패널은 이미지 생성 제외
       const pType = editingPanels[i].panel_type ?? "visual";
       if (pType === "narration" || pType === "skip") continue;
       if (generatedImages[i]) continue;
-      await generatePanelImage(i);
+      targetIndices.push(i);
     }
+
+    if (targetIndices.length === 0) {
+      setIsGeneratingAll(false);
+      return;
+    }
+
+    const isVertex = selectedModel.startsWith("vertex/");
+
+    if (isVertex) {
+      // ── Vertex AI 배치 병렬 생성 ──
+      const batchRequests: BatchPanelRequest[] = [];
+      for (const idx of targetIndices) {
+        const data = preparePanelData(idx);
+        if (!data) continue;
+        batchRequests.push({
+          idx,
+          prompt: data.prompt,
+          sizeKey: "portrait_4_3",
+          referenceImageUrls: data.referenceImageUrls.length > 0 ? data.referenceImageUrls : undefined,
+        });
+        setGenProgress(prev => ({ ...prev, [idx]: "배치 대기 중..." }));
+      }
+
+      console.log(`[VertexBatch] Starting batch: ${batchRequests.length} panels, concurrency=3`);
+
+      const results = await generateVertexBatch(batchRequests, {
+        concurrency: 3,
+        onProgress: (completed, total, idx, success) => {
+          if (success) {
+            setGenProgress(prev => ({ ...prev, [idx]: `완료 (${completed}/${total})` }));
+          } else {
+            setGenProgress(prev => ({ ...prev, [idx]: `실패 (${completed}/${total})` }));
+          }
+        },
+      });
+
+      // 결과 적용
+      for (const r of results) {
+        if (r.imageUrl) {
+          setGeneratedImages(prev => ({ ...prev, [r.idx]: r.imageUrl! }));
+        } else {
+          setGenProgress(prev => ({ ...prev, [r.idx]: `실패: ${r.error}` }));
+        }
+      }
+
+      console.log(`[VertexBatch] Done: ${results.filter(r => r.imageUrl).length}/${results.length} succeeded`);
+    } else {
+      // ── 기타 모델: 순차 생성 ──
+      for (const i of targetIndices) {
+        await generatePanelImage(i);
+      }
+    }
+
     setIsGeneratingAll(false);
-  }, [editingPanels, kieReady, generatedImages, generatePanelImage]);
+  }, [editingPanels, kieReady, generatedImages, generatePanelImage, selectedModel, preparePanelData]);
 
   // ── "레퍼런스로 저장" 모달 열기 (Auto Tag 실행) ──
   const openSaveRefModal = useCallback(async (idx: number) => {
