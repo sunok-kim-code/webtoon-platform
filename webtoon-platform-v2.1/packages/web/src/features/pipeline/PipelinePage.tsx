@@ -66,7 +66,7 @@ const ANGLE_OPTIONS = ["wide shot","medium shot","close-up","extreme close-up","
 
 interface PipelineSaveData {
   sceneText: string;
-  analysisMode: "gemini" | "local" | null;
+  analysisMode: "gemini" | null;
   analysis: any;
   editingPanels: GeminiPanelSuggestion[];
   panelPrompts: Record<number, string>;
@@ -158,7 +158,7 @@ export function PipelinePage() {
   // ── 상태 ──
   const [sceneText, setSceneText] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisMode, setAnalysisMode] = useState<"gemini" | "local" | null>(null);
+  const [analysisMode, setAnalysisMode] = useState<"gemini" | null>(null);
   const [analysis, setAnalysis] = useState<GeminiSceneAnalysis | LocalAnalysis | null>(null);
   const [editingPanels, setEditingPanels] = useState<GeminiPanelSuggestion[]>([]);
   const [panelPrompts, setPanelPrompts] = useState<Record<number, string>>({});
@@ -452,7 +452,7 @@ export function PipelinePage() {
         throw new Error("AI API 키가 설정되지 않았습니다. 설정에서 API 키를 연결해주세요.");
       }
 
-      // 기존 의상 ID 목록을 Claude에게 전달하여 동일 의상 재사용
+      // 기존 의상 ID 목록을 Gemini에게 전달하여 동일 의상 재사용
       const existingOutfitIds = registeredOutfits.map(o => o.id);
       result = await analyzeSceneWithGemini(
         sceneText,
@@ -550,16 +550,27 @@ export function PipelinePage() {
         }
       });
 
-      // ── 의상 라이브러리 동기화 (outfitNormalizedId 기반) ──
+      // ── 의상 라이브러리 동기화 (outfitNormalizedId 기반, 중복 방지 강화) ──
       {
         const { addOrUpdateOutfit, outfits: existingOutfits, characters: latestCharsForOutfit } = useReferenceStore.getState();
         result.characters.forEach(c => {
           const normalizedId = (c as any).outfitNormalizedId;
           if (!normalizedId || !c.outfit) return;
-          const alreadyExists = existingOutfits.some(o => o.id === normalizedId);
-          if (alreadyExists) return;
           const char = latestCharsForOutfit.find(ch => ch.name === c.name) || existingChars.find(ch => ch.name === c.name);
           if (!char) return;
+
+          // 중복 체크: ID 일치 또는 같은 캐릭터의 기존 의상 중 label/description 키워드 매칭
+          const charOutfits = existingOutfits.filter(o => o.characterId === char.id || o.characterName === char.name);
+          const outfitKeywords = normalizedId.toLowerCase().split("_").filter((k: string) => k.length > 1);
+          const alreadyExists = charOutfits.some(o => {
+            if (o.id === normalizedId) return true;
+            // label 또는 description에 키워드가 포함되면 동일 의상으로 판단
+            const existingText = `${o.label} ${o.description}`.toLowerCase();
+            const matchCount = outfitKeywords.filter((kw: string) => existingText.includes(kw)).length;
+            return matchCount >= 2 || (outfitKeywords.length === 1 && matchCount === 1);
+          });
+          if (alreadyExists) return;
+
           const accessoriesArr = (c as any).accessories && (c as any).accessories !== "none"
             ? (c as any).accessories.split(",").map((s: string) => s.trim()).filter(Boolean)
             : [];
@@ -724,7 +735,7 @@ export function PipelinePage() {
       // ── 분석 결과 Firebase에 저장 ──
       savePipelineToFirebase(projectId, episodeId, {
         sceneText,
-        analysisMode: geminiReady ? "gemini" : "local",
+        analysisMode: "gemini",
         analysis: result,
         editingPanels: result.panels,
         panelPrompts: prompts,
