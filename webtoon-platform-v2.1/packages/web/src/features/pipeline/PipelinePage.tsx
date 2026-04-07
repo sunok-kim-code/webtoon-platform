@@ -17,10 +17,6 @@ import {
   autoTagImageWithVision,
   isGeminiConfigured,
   getGeminiAuthMode,
-  getCurrentModelId,
-  setGeminiModel,
-  GEMINI_MODELS,
-  type GeminiModelId,
   type GeminiSceneAnalysis,
   type GeminiPanelSuggestion,
   type GeminiCharacterAnalysis,
@@ -428,7 +424,6 @@ export function PipelinePage() {
 
   const geminiReady = isGeminiConfigured();
   const kieReady = isKieImageConfigured();
-  const [selectedAnalysisModel, setSelectedAnalysisModel] = useState<GeminiModelId>(() => getCurrentModelId());
   const aiAuthLabel = getGeminiAuthMode();
 
   const resolver = new ReferenceResolver(
@@ -1359,45 +1354,15 @@ export function PipelinePage() {
             </span>
           </div>
 
-          {/* ── 씬 분석 모델 선택 ── */}
+          {/* ── 씬 분석 모델 (Gemini 3 Pro 고정) ── */}
           <div style={{ marginBottom: "16px" }}>
             <label style={{ ...S.label, marginBottom: "8px", display: "block" }}>씬 분석 모델</label>
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-              {GEMINI_MODELS.map(model => {
-                const isSelected = selectedAnalysisModel === model.id;
-                return (
-                  <button
-                    key={model.id}
-                    onClick={() => {
-                      setSelectedAnalysisModel(model.id);
-                      setGeminiModel(model.id);
-                    }}
-                    style={{
-                      padding: "8px 14px",
-                      borderRadius: "8px",
-                      border: isSelected ? "2px solid #7c3aed" : "2px solid #e5e7eb",
-                      background: isSelected ? "#f5f3ff" : "#fff",
-                      color: isSelected ? "#7c3aed" : "#374151",
-                      fontWeight: isSelected ? 600 : 400,
-                      fontSize: "13px",
-                      cursor: "pointer",
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "flex-start",
-                      gap: "2px",
-                      minWidth: "140px",
-                    }}
-                  >
-                    <span style={{ display: "flex", alignItems: "center", gap: "5px" }}>
-                      <span>{model.provider === "kie" ? "🤖" : "🔵"}</span>
-                      <span>{model.name}</span>
-                    </span>
-                    <span style={{ fontSize: "11px", color: isSelected ? "#7c3aed" : "#9ca3af", fontWeight: 400 }}>
-                      {model.description}
-                    </span>
-                  </button>
-                );
-              })}
+            <div style={{
+              padding: "8px 14px", borderRadius: "8px", border: "2px solid #7c3aed",
+              background: "#f5f3ff", color: "#7c3aed", fontWeight: 600, fontSize: "13px",
+              display: "inline-block",
+            }}>
+              🤖 Gemini 3 Pro — Kie.ai
             </div>
           </div>
 
