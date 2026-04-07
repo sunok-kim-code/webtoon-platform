@@ -615,7 +615,7 @@ async function callVertexGeminiImage(
   const parts: any[] = [];
 
   if (referenceImageUrls && referenceImageUrls.length > 0) {
-    const maxRefImages = Math.min(referenceImageUrls.length, 4);
+    const maxRefImages = referenceImageUrls.length; // 제한 없이 모든 ref 이미지 전달
     for (let i = 0; i < maxRefImages; i++) {
       try {
         // fetch 방식 시도 → CORS 실패 시 img+canvas fallback

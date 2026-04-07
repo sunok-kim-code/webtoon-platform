@@ -1270,7 +1270,7 @@ export function PipelinePage() {
     for (const url of allRefs) {
       if (!uniqueRefs.includes(url)) uniqueRefs.push(url);
     }
-    const finalRefUrls = uniqueRefs.slice(0, 4);
+    const finalRefUrls = uniqueRefs; // 제한 없이 모든 ref 전달
 
     if (idx > 0 && generatedImages[idx - 1]) {
       prompt += "\n\n[STYLE LOCK — CRITICAL] You MUST maintain IDENTICAL art style, character appearance, and visual consistency with the previous panels provided as reference images. Specifically preserve: same linework weight and thickness, same color palette and saturation, same shading/lighting technique, same character face shape/proportions/hair style, same skin tone rendering, same background detail level. Every panel must look like the SAME ARTIST drew it in ONE SESSION. The reference images are from immediately preceding panels in the same comic — match them exactly.";
