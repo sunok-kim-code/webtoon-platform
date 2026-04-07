@@ -1608,7 +1608,9 @@ export function PipelinePage() {
                               }
                               const outfitThumb = outfitEntry?.references?.[0]?.storageUrl;
                               const charThumb = refImages[`char_${cn}`];
-                              const thumb = outfitThumb || charThumb;
+                              // 갤러리에 등록된 캐릭터 레퍼런스 이미지 fallback
+                              const regCharThumb = !charThumb ? registeredChars.find(rc => rc.name === cn)?.references?.[0]?.storageUrl : undefined;
+                              const thumb = outfitThumb || charThumb || regCharThumb;
                               const refTag = outfitId ? `ref:outfit/${outfitId}` : `ref:outfit/${cn}`;
                               return (
                                 <div
@@ -1643,7 +1645,13 @@ export function PipelinePage() {
                             {/* 장소 레퍼런스 — ref:location/... 태그로 표시 */}
                             {(() => {
                               const panelLocName = (panel as any)?.location || analysis?.location?.name;
-                              const locThumb = panelLocName ? (refImages[`loc_${panelLocName}`] || refImages[`loc_${analysis?.location?.name}`]) : undefined;
+                              // 1. refImages state (직접 생성된 이미지)
+                              let locThumb = panelLocName ? (refImages[`loc_${panelLocName}`] || refImages[`loc_${analysis?.location?.name}`]) : undefined;
+                              // 2. 갤러리에 등록된 장소 레퍼런스 이미지
+                              if (!locThumb && panelLocName) {
+                                const regLoc = registeredLocs.find(l => l.name === panelLocName) || registeredLocs.find(l => l.name === analysis?.location?.name);
+                                locThumb = regLoc?.references?.[0]?.storageUrl;
+                              }
                               const refLocTag = panelLocName ? `ref:location/${panelLocName.replace(/\s/g, "_")}` : "";
                               return panelLocName ? (
                                 <div
