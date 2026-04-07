@@ -1721,7 +1721,7 @@ export function PipelinePage() {
                                 {generatedImages[idx - 1] && (
                                   <button
                                     onClick={e => { e.stopPropagation(); toggleExcludeRef(idx, "prev"); }}
-                                    style={{ ...S.refStripSwap, color: isRefExcluded(idx, "prev") ? "#2563EB" : "#EF4444" }}
+                                    style={isRefExcluded(idx, "prev") ? S.refExcludeBtnActive : S.refExcludeBtn}
                                     title={isRefExcluded(idx, "prev") ? "다시 포함" : "제외"}
                                   >{isRefExcluded(idx, "prev") ? "↩" : "✕"}</button>
                                 )}
@@ -1767,7 +1767,7 @@ export function PipelinePage() {
                                     <>
                                       <button
                                         onClick={e => { e.stopPropagation(); toggleExcludeRef(idx, charRefKey); }}
-                                        style={{ ...S.refStripSwap, color: isRefExcluded(idx, charRefKey) ? "#2563EB" : "#EF4444", right: "20px" }}
+                                        style={isRefExcluded(idx, charRefKey) ? S.refExcludeBtnActive : S.refExcludeBtn}
                                         title={isRefExcluded(idx, charRefKey) ? "다시 포함" : "제외"}
                                       >{isRefExcluded(idx, charRefKey) ? "↩" : "✕"}</button>
                                       <button
@@ -1814,7 +1814,7 @@ export function PipelinePage() {
                                     <>
                                       <button
                                         onClick={e => { e.stopPropagation(); toggleExcludeRef(idx, locRefKey); }}
-                                        style={{ ...S.refStripSwap, color: isRefExcluded(idx, locRefKey) ? "#2563EB" : "#EF4444", right: "20px" }}
+                                        style={isRefExcluded(idx, locRefKey) ? S.refExcludeBtnActive : S.refExcludeBtn}
                                         title={isRefExcluded(idx, locRefKey) ? "다시 포함" : "제외"}
                                       >{isRefExcluded(idx, locRefKey) ? "↩" : "✕"}</button>
                                       <button
@@ -2890,6 +2890,20 @@ const S = {
     width: "16px", height: "16px", borderRadius: "50%" , border: "1px solid #d1d5db",
     background: "#fff", cursor: "pointer", fontSize: "10px", lineHeight: "14px",
     textAlign: "center" as const, padding: 0, color: "#6b7280",
+  } as const,
+  refExcludeBtn: {
+    position: "absolute" as const, top: "-6px", left: "-6px",
+    width: "22px", height: "22px", borderRadius: "50%", border: "2px solid #EF4444",
+    background: "#FEE2E2", cursor: "pointer", fontSize: "13px", lineHeight: "18px",
+    textAlign: "center" as const, padding: 0, color: "#EF4444", fontWeight: 700,
+    zIndex: 2,
+  } as const,
+  refExcludeBtnActive: {
+    position: "absolute" as const, top: "-6px", left: "-6px",
+    width: "22px", height: "22px", borderRadius: "50%", border: "2px solid #2563EB",
+    background: "#DBEAFE", cursor: "pointer", fontSize: "13px", lineHeight: "18px",
+    textAlign: "center" as const, padding: 0, color: "#2563EB", fontWeight: 700,
+    zIndex: 2,
   } as const,
     saveRefBtn: {
     padding: "6px 10px", background: "#fef3c7", color: "#92400e",
