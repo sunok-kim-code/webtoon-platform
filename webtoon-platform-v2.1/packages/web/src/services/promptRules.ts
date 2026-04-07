@@ -238,6 +238,8 @@ export interface PanelPromptContext {
   rawComposition: string;
   /** 패널 장면 설명 (description — 무엇이 일어나는지) */
   sceneDescription: string;
+  /** AI 프롬프트 (Gemini가 생성한 영어 이미지 프롬프트 — 상세 시각 묘사 포함) */
+  aiPrompt?: string;
   /** 레퍼런스 태그 문자열 (예: "[ref:outfit/지호_school, ref:location/교실]") */
   refTags: string;
   /** 캐릭터 수 */
@@ -248,7 +250,8 @@ export interface PanelPromptContext {
 
 
 // ══════════════════════════════════════════════════════════════
-// applyPromptRules — 활성화된 규칙을 프롬프트에 적용
+// applyPromptRules — aiPrompt(장면 묘사)를 코어로 사용하고
+// 품질 규칙(스타일·조명·비례·순화)만 래핑하는 방식
 // ══════════════════════════════════════════════════════════════
 
 export function applyPromptRules(ctx: PanelPromptContext): string {
@@ -256,12 +259,10 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
   // ── 규칙2+5: 동작 순화 + 감정 담백화 헬퍼 ──
   function softenText(text: string): string {
     let result = text;
-    // 동적 액션 → 정적 상태 순화
     for (const [intense, soft] of Object.entries(ACTION_SOFTENER)) {
       const re = new RegExp(intense.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
       result = result.replace(re, soft);
     }
-    // 자극적 감정 → 담백한 표현
     for (const [strong, gentle] of Object.entries(EMOTION_SOFTENER)) {
       const re = new RegExp(`\\b${strong.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi");
       result = result.replace(re, gentle);
@@ -269,88 +270,74 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
     return result;
   }
 
-  // ── 1. Style (규칙1: 통합 스타일 — 아트 스타일은 PipelinePage에서 prefix로 관리,
-  //    여기서는 충돌 방지용 기본 지시만) ──
-  const styleSection = "Style: Consistent art style across character and background. NO mixed rendering techniques.";
+  // ── 1. 코어 프롬프트 결정 ──
+  // aiPrompt(영어 시각 묘사) + sceneDescription(원본 장면 설명)을 모두 포함
+  // Gemini가 aiPrompt에서 디테일을 누락해도 sceneDescription이 안전망 역할
+  let corePrompt = "";
 
-  // ── 2. Setting (배경 + 규칙3: 조명 단일화 + 부정어 활용) ──
-  const lightingHint = buildLightingShort(ctx.timeLabel, ctx.moodLabel);
-  const settingParts = [ctx.locationName];
-  if (ctx.timeLabel) settingParts.push(ctx.timeLabel);
-  if (lightingHint) settingParts.push(lightingHint);
-  // 규칙3: 강한 대비/극단적 어둠 금지
-  settingParts.push("NO harsh contrast, NO extreme darkness");
-  const settingSection = `Setting: ${settingParts.join(", ")}.`;
+  if (ctx.aiPrompt) {
+    // 스타일/품질 접두사 제거 (래핑으로 따로 관리)
+    corePrompt = ctx.aiPrompt
+      .replace(/^(korean\s+)?webtoon\s+style\s*,?\s*/i, "")
+      .replace(/^(manhwa|manga)\s+style\s*,?\s*/i, "")
+      .replace(/\b,?\s*high quality\b/gi, "")
+      .replace(/\b,?\s*detailed\b/gi, "")
+      .replace(/\b,?\s*korean webtoon art style\b/gi, "")
+      .trim();
+  }
 
-  // ── 3. Camera (규칙4: 비례 고정 — 환경과 인물의 정확한 스케일) ──
-  let cameraWithScale = ctx.cameraAngle;
-  // 규칙4: 비례 고정 힌트 추가
-  cameraWithScale += ". Character is correctly scaled to the environment";
-  const cameraSection = `Camera: ${cameraWithScale}.`;
-
-  // ── 4. Scene (장면 설명 — composition + description에서 핵심 상황 전달) ──
-  let sceneSection = "";
-  {
-    // rawComposition과 sceneDescription 합쳐서 중복 제거
-    const parts: string[] = [];
-    if (ctx.rawComposition) parts.push(ctx.rawComposition.trim());
-    if (ctx.sceneDescription && ctx.sceneDescription !== ctx.rawComposition) {
-      parts.push(ctx.sceneDescription.trim());
-    }
-    const sceneText = softenText(parts.join(". ").replace(/\.+/g, ".").trim());
-    if (sceneText) {
-      sceneSection = `Scene: ${sceneText}.`;
+  // sceneDescription(원본 장면 설명)을 항상 포함 — aiPrompt에서 빠진 디테일 보완
+  // (헤어스타일, 소품, 자세, 피부 노출 등 다음 씬과의 시각적 연결에 필수적인 정보)
+  if (ctx.sceneDescription) {
+    const desc = ctx.sceneDescription.trim();
+    if (corePrompt) {
+      // aiPrompt와 sceneDescription 모두 있으면 병합
+      corePrompt = `${corePrompt}. [Scene detail: ${desc}]`;
+    } else {
+      // aiPrompt가 없으면 sceneDescription만 사용
+      corePrompt = desc;
     }
   }
 
-  // ── 5. Subject N (캐릭터별 개별 항목 — 규칙2: 동작 순화, 규칙5: 감정 담백화 적용) ──
-  const subjectSections: string[] = [];
-  ctx.subjects.forEach((subj, i) => {
-    const tag = [subj.gender, subj.outfit].filter(Boolean).join(", ");
-    const label = tag ? `${subj.name} (${tag})` : subj.name;
-
-    const details: string[] = [];
-
-    // 동작: 단순 상태 동사면 보강, 그 후 순화 적용
-    if (subj.action) {
-      const enhanced = STATIC_ACTION_ENHANCE[subj.action];
-      details.push(softenText(enhanced || subj.action));
+  // composition 정보가 빠져 있으면 보완
+  if (ctx.rawComposition) {
+    const comp = ctx.rawComposition.trim();
+    if (comp && !corePrompt.toLowerCase().includes(comp.toLowerCase())) {
+      corePrompt = corePrompt ? `${corePrompt}. ${comp}` : comp;
     }
+  }
 
-    if (subj.position) details.push(subj.position);
+  // 동작·감정 순화 적용
+  corePrompt = softenText(corePrompt);
 
-    // 감정: 추상 단어면 시각적 신체 묘사로 변환, 그 후 순화 적용
-    if (subj.expression) {
-      const visual = EMOTION_TO_VISUAL[subj.expression];
-      if (visual) {
-        details.push(softenText(visual));
-      } else {
-        details.push(softenText(subj.expression));
-      }
-    }
+  // ── 2. 품질 규칙 프리픽스 (스타일 통일 + 조명 + 카메라 비례) ──
+  const qualityRules: string[] = [];
 
-    // 뒷모습이면 body language 힌트 추가
-    const isBack = ctx.characterAngles?.[subj.name] === "back" ||
-                   subj.position?.includes("back view");
-    if (isBack) {
-      details.push("convey emotion through body language");
-    }
+  // 규칙1: 스타일 통일
+  qualityRules.push("Consistent art style across character and background. NO mixed rendering techniques.");
 
-    // 규칙5: 극단 표정 금지
-    details.push("NO extreme facial expressions");
+  // 규칙3: 조명 — 구체적 광원, 강한 대비 금지
+  const lightingHint = buildLightingShort(ctx.timeLabel, ctx.moodLabel);
+  if (lightingHint) {
+    qualityRules.push(`${lightingHint}. NO harsh contrast, NO extreme darkness.`);
+  }
 
-    const refTag = subj.outfitRef ? ` [${subj.outfitRef}]` : "";
-    const detailStr = details.length > 0 ? `: ${details.join(", ")}` : "";
-    subjectSections.push(`Subject ${i + 1}: ${label}${detailStr}.${refTag}`);
-  });
+  // 규칙4: 카메라 — 비례 고정
+  if (ctx.cameraAngle) {
+    qualityRules.push(`${ctx.cameraAngle}, character correctly scaled to the environment.`);
+  }
 
-  // ── 5. Depth (입체감 — 캐릭터 배치 포함) ──
-  let depthSection = "";
+  // 규칙5: 극단 표정 금지
+  qualityRules.push("NO extreme facial expressions.");
+
+  // ── 3. 서픽스 (레퍼런스 태그 + depth) ──
+  const suffixParts: string[] = [];
+
+  // Depth 힌트
   if (ctx.characterCount >= 2 && ctx.subjects.length >= 2) {
     const layers: string[] = [];
     const fgChar = ctx.subjects.find(s => s.position?.includes("foreground"));
     const mgChar = ctx.subjects.find(s => s.position?.includes("midground") || (!s.position?.includes("foreground") && !s.position?.includes("background")));
-    const bgChar = ctx.subjects.find(s => s.position?.includes("background"));
 
     if (fgChar) layers.push(`foreground(${fgChar.name})`);
     else layers.push(`foreground(${ctx.subjects[0].name})`);
@@ -359,23 +346,27 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
     else if (ctx.subjects.length > 1) layers.push(`midground(${ctx.subjects[1].name})`);
 
     layers.push("background");
-    depthSection = `Depth: Three-layer composition: ${layers.join(", ")}.`;
-  } else if (ctx.characterCount === 1) {
-    depthSection = "Depth: Character focus with environmental background depth.";
+    suffixParts.push(`Depth: ${layers.join(", ")}.`);
   }
 
-  // ── 6. Reference Tags (레퍼런스 이미지 참조) ──
-  const locRef = ctx.refTags || "";
+  // 의상 레퍼런스 태그
+  const outfitRefs = ctx.subjects
+    .filter(s => s.outfitRef)
+    .map(s => `[${s.outfitRef}]`);
+  if (outfitRefs.length > 0) {
+    suffixParts.push(outfitRefs.join(" "));
+  }
 
-  // ── 최종 조립 ──
+  // 위치/장소 레퍼런스 태그
+  if (ctx.refTags) {
+    suffixParts.push(ctx.refTags);
+  }
+
+  // ── 최종 조립: [품질 규칙] + [코어 장면 묘사] + [서픽스] ──
   return [
-    styleSection,
-    settingSection,
-    cameraSection,
-    sceneSection,
-    ...subjectSections,
-    depthSection,
-    locRef,
+    qualityRules.join(" "),
+    corePrompt,
+    suffixParts.join(" "),
   ]
     .filter(Boolean)
     .join(" ");

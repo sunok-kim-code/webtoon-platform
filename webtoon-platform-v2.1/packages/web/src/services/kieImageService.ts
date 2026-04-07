@@ -1121,7 +1121,8 @@ export async function generateImage(
 }
 
 // ══════════════════════════════════════════════════════════════
-// Vertex AI 배치(Batch) 이미지 생성 — 여러 패널을 동시에 생성
+// Vertex AI BatchPredictionJob — 50% 비용 절감 배치 이미지 생성
+// GCS JSONL 입력 → BatchPredictionJob → GCS 출력 → 결과 파싱
 // ══════════════════════════════════════════════════════════════
 
 export interface BatchPanelRequest {
@@ -1137,55 +1138,459 @@ export interface BatchPanelResult {
   error?: string;
 }
 
+/** 배치 작업 상태 */
+export type BatchJobState =
+  | "JOB_STATE_QUEUED"
+  | "JOB_STATE_PENDING"
+  | "JOB_STATE_RUNNING"
+  | "JOB_STATE_SUCCEEDED"
+  | "JOB_STATE_FAILED"
+  | "JOB_STATE_CANCELLING"
+  | "JOB_STATE_CANCELLED"
+  | "JOB_STATE_PAUSED"
+  | "JOB_STATE_EXPIRED";
+
+export interface VertexBatchJobInfo {
+  jobName: string;
+  state: BatchJobState;
+  outputGcsUri?: string;
+}
+
+// ─── GCS 헬퍼 (Firebase Storage = GCS 버킷) ──────────────────
+
+const GCS_BUCKET = "rhivclass.firebasestorage.app";
+
+/** GCS에 JSON/JSONL 텍스트 업로드 (Firebase Storage REST API 사용) */
+async function uploadToGcs(
+  gcsPath: string,
+  content: string,
+  contentType: string,
+  accessToken: string,
+): Promise<string> {
+  const encodedPath = encodeURIComponent(gcsPath);
+  const url = `https://storage.googleapis.com/upload/storage/v1/b/${GCS_BUCKET}/o?uploadType=media&name=${encodedPath}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": contentType,
+      "Authorization": `Bearer ${accessToken}`,
+    },
+    body: content,
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`GCS upload failed (${res.status}): ${errText.substring(0, 300)}`);
+  }
+
+  return `gs://${GCS_BUCKET}/${gcsPath}`;
+}
+
+/** GCS에서 텍스트 파일 다운로드 */
+async function downloadFromGcs(
+  gcsUri: string,
+  accessToken: string,
+): Promise<string> {
+  // gs://bucket/path → path 추출
+  const match = gcsUri.match(/^gs:\/\/[^/]+\/(.+)$/);
+  if (!match) throw new Error(`Invalid GCS URI: ${gcsUri}`);
+  const objectPath = match[1];
+  const encodedPath = encodeURIComponent(objectPath);
+  const url = `https://storage.googleapis.com/storage/v1/b/${GCS_BUCKET}/o/${encodedPath}?alt=media`;
+
+  const res = await fetch(url, {
+    headers: { "Authorization": `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`GCS download failed (${res.status}): ${errText.substring(0, 300)}`);
+  }
+
+  return res.text();
+}
+
+/** GCS 경로 아래 오브젝트 목록 조회 */
+async function listGcsObjects(
+  prefix: string,
+  accessToken: string,
+): Promise<string[]> {
+  const encodedPrefix = encodeURIComponent(prefix);
+  const url = `https://storage.googleapis.com/storage/v1/b/${GCS_BUCKET}/o?prefix=${encodedPrefix}`;
+
+  const res = await fetch(url, {
+    headers: { "Authorization": `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`GCS list failed (${res.status}): ${errText.substring(0, 300)}`);
+  }
+
+  const data = await res.json();
+  const items: string[] = (data.items || []).map((item: any) => item.name as string);
+  return items;
+}
+
+// ─── JSONL 입력 준비 ──────────────────────────────────────────
+
+/** 레퍼런스 이미지 URL을 base64 인라인 데이터로 변환 */
+async function buildRefParts(referenceImageUrls?: string[]): Promise<any[]> {
+  const parts: any[] = [];
+  if (!referenceImageUrls || referenceImageUrls.length === 0) return parts;
+
+  const maxRefs = Math.min(referenceImageUrls.length, 2);
+  for (let i = 0; i < maxRefs; i++) {
+    try {
+      let refBase64 = "";
+      let mimeType = "image/png";
+      try {
+        const refRes = await fetch(referenceImageUrls[i]);
+        if (!refRes.ok) throw new Error(`HTTP ${refRes.status}`);
+        const refBlob = await refRes.blob();
+        refBase64 = await blobToBase64(refBlob);
+        mimeType = refBlob.type || "image/png";
+      } catch {
+        const result = await imageUrlToBase64ViaCanvas(referenceImageUrls[i]);
+        refBase64 = result.data;
+        mimeType = result.mimeType;
+      }
+      if (refBase64) {
+        parts.push({ inlineData: { mimeType, data: refBase64 } });
+      }
+    } catch (e) {
+      console.warn(`[VertexBatch] Failed to fetch ref image ${i}:`, e);
+    }
+  }
+  return parts;
+}
+
+/** 패널 요청 배열 → JSONL 문자열 (각 행 = generateContent 요청) */
+async function buildBatchJsonl(panels: BatchPanelRequest[]): Promise<string> {
+  const lines: string[] = [];
+
+  for (const panel of panels) {
+    const refParts = await buildRefParts(panel.referenceImageUrls);
+    const prompt = sanitizePromptForNSFW(panel.prompt);
+
+    const textPart = refParts.length > 0
+      ? { text: `Use the above reference images as style and character reference. Generate a new image based on the following description:\n\n${prompt}` }
+      : { text: prompt };
+
+    const allParts = [...refParts, textPart];
+
+    const request = {
+      contents: [{ role: "user", parts: allParts }],
+      generationConfig: {
+        responseModalities: ["IMAGE", "TEXT"],
+      },
+      labels: { panel_idx: String(panel.idx) },
+    };
+
+    lines.push(JSON.stringify({ request }));
+  }
+
+  return lines.join("\n");
+}
+
+// ─── BatchPredictionJob API ──────────────────────────────────
+
 /**
- * Vertex AI를 이용해 여러 패널 이미지를 동시에 생성합니다.
- * concurrency 파라미터로 동시 요청 수를 제어합니다 (Vertex AI 쿼터 고려).
+ * Vertex AI BatchPredictionJob을 생성합니다.
+ * 50% 비용 할인이 적용되는 비동기 배치 처리입니다.
+ */
+export async function createVertexBatchJob(
+  panels: BatchPanelRequest[],
+  onStatus?: (msg: string) => void,
+): Promise<VertexBatchJobInfo> {
+  const projectId = localStorage.getItem("VERTEX_PROJECT_ID") || "";
+  const location = localStorage.getItem("VERTEX_LOCATION") || "us-central1";
+  if (!projectId) throw new Error("Vertex AI 설정이 필요합니다. VERTEX_PROJECT_ID를 설정하세요.");
+
+  let accessToken = await fetchFreshToken();
+  if (!accessToken) throw new Error("Vertex AI 토큰이 없습니다.");
+
+  const modelName = "gemini-3-pro-image-preview";
+  const timestamp = Date.now();
+  const batchId = `batch_panels_${timestamp}`;
+  const gcsInputPath = `vertex_batch/${batchId}/input.jsonl`;
+  const gcsOutputPrefix = `vertex_batch/${batchId}/output`;
+
+  // 1) JSONL 입력 준비
+  onStatus?.("JSONL 입력 파일 준비 중...");
+  console.log(`[VertexBatch] Preparing JSONL for ${panels.length} panels...`);
+  const jsonlContent = await buildBatchJsonl(panels);
+
+  // 2) GCS에 JSONL 업로드
+  onStatus?.("GCS에 입력 파일 업로드 중...");
+  console.log(`[VertexBatch] Uploading JSONL to gs://${GCS_BUCKET}/${gcsInputPath}`);
+  const inputGcsUri = await uploadToGcs(gcsInputPath, jsonlContent, "application/jsonl", accessToken);
+
+  // 3) BatchPredictionJob 생성
+  onStatus?.("배치 작업 생성 중...");
+  // gemini-3-pro 계열은 global 엔드포인트 사용
+  const useGlobal = modelName.startsWith("gemini-3");
+  const apiLocation = useGlobal ? "global" : location;
+  const apiHost = useGlobal ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
+
+  const jobUrl = `https://${apiHost}/v1/projects/${projectId}/locations/${apiLocation}/batchPredictionJobs`;
+
+  const jobBody = {
+    displayName: `webtoon-panels-${batchId}`,
+    model: `publishers/google/models/${modelName}`,
+    inputConfig: {
+      instancesFormat: "jsonl",
+      gcsSource: {
+        uris: [inputGcsUri],
+      },
+    },
+    outputConfig: {
+      predictionsFormat: "jsonl",
+      gcsDestination: {
+        outputUriPrefix: `gs://${GCS_BUCKET}/${gcsOutputPrefix}`,
+      },
+    },
+  };
+
+  console.log(`[VertexBatch] Creating BatchPredictionJob...`, jobBody);
+
+  const createRes = await fetch(jobUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(jobBody),
+  });
+
+  if (!createRes.ok) {
+    const errText = await createRes.text();
+    throw new Error(`BatchPredictionJob 생성 실패 (${createRes.status}): ${errText.substring(0, 500)}`);
+  }
+
+  const jobData = await createRes.json();
+  const jobName = jobData.name as string; // projects/.../locations/.../batchPredictionJobs/123
+  console.log(`[VertexBatch] Job created: ${jobName}, state: ${jobData.state}`);
+
+  return {
+    jobName,
+    state: jobData.state || "JOB_STATE_QUEUED",
+    outputGcsUri: `gs://${GCS_BUCKET}/${gcsOutputPrefix}`,
+  };
+}
+
+/**
+ * 배치 작업 상태를 폴링합니다.
+ * 완료될 때까지 반복 확인하며, onStatus 콜백으로 상태를 전달합니다.
+ */
+export async function pollVertexBatchJob(
+  jobName: string,
+  onStatus?: (state: BatchJobState, msg: string) => void,
+  pollIntervalMs = 15000,
+  maxWaitMs = 3600000, // 1시간 최대 대기
+): Promise<{ state: BatchJobState; outputUri?: string }> {
+  const startTime = Date.now();
+
+  // jobName에서 프로젝트/위치 정보 추출하여 올바른 엔드포인트 결정
+  const useGlobal = jobName.includes("/locations/global/");
+  const apiHost = useGlobal ? "aiplatform.googleapis.com" : (() => {
+    const locMatch = jobName.match(/\/locations\/([^/]+)\//);
+    const loc = locMatch?.[1] || "us-central1";
+    return `${loc}-aiplatform.googleapis.com`;
+  })();
+
+  while (Date.now() - startTime < maxWaitMs) {
+    let accessToken = await fetchFreshToken();
+    if (!accessToken) throw new Error("Vertex AI 토큰이 없습니다.");
+
+    const statusUrl = `https://${apiHost}/v1/${jobName}`;
+    const res = await fetch(statusUrl, {
+      headers: { "Authorization": `Bearer ${accessToken}` },
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.warn(`[VertexBatch] Poll error (${res.status}): ${errText.substring(0, 200)}`);
+      // 일시적 에러는 재시도
+      if (res.status >= 500) {
+        await new Promise(r => setTimeout(r, pollIntervalMs));
+        continue;
+      }
+      throw new Error(`배치 작업 상태 조회 실패 (${res.status}): ${errText.substring(0, 300)}`);
+    }
+
+    const jobData = await res.json();
+    const state = jobData.state as BatchJobState;
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+
+    console.log(`[VertexBatch] Poll: state=${state}, elapsed=${elapsed}s`);
+    onStatus?.(state, `배치 작업 상태: ${state} (${elapsed}초 경과)`);
+
+    // 종료 상태 확인
+    if (state === "JOB_STATE_SUCCEEDED") {
+      const outputUri = jobData.outputConfig?.gcsDestination?.outputUriPrefix
+        || jobData.outputInfo?.gcsOutputDirectory;
+      return { state, outputUri };
+    }
+
+    if (
+      state === "JOB_STATE_FAILED" ||
+      state === "JOB_STATE_CANCELLED" ||
+      state === "JOB_STATE_EXPIRED"
+    ) {
+      const errorMsg = jobData.error?.message || state;
+      throw new Error(`배치 작업 실패: ${errorMsg}`);
+    }
+
+    // 대기 후 재시도
+    await new Promise(r => setTimeout(r, pollIntervalMs));
+  }
+
+  throw new Error("배치 작업 시간 초과 (1시간)");
+}
+
+/**
+ * 배치 작업 출력 JSONL을 다운로드하고 파싱하여 이미지 blob URL로 변환합니다.
+ * panels 배열의 idx 순서와 매칭합니다.
+ */
+export async function parseVertexBatchResults(
+  outputGcsUri: string,
+  panels: BatchPanelRequest[],
+  onStatus?: (msg: string) => void,
+): Promise<BatchPanelResult[]> {
+  let accessToken = await fetchFreshToken();
+  if (!accessToken) throw new Error("Vertex AI 토큰이 없습니다.");
+
+  onStatus?.("배치 결과 다운로드 중...");
+
+  // 출력 디렉토리에서 JSONL 파일 목록 조회
+  const gsPrefix = outputGcsUri.replace(`gs://${GCS_BUCKET}/`, "");
+  const objectNames = await listGcsObjects(gsPrefix, accessToken);
+
+  // JSONL 결과 파일 찾기
+  const jsonlFiles = objectNames.filter(name =>
+    name.endsWith(".jsonl") || name.includes("predictions")
+  );
+
+  if (jsonlFiles.length === 0) {
+    // 하위 폴더 탐색 (Vertex AI는 output/ 아래에 prediction 폴더 생성 가능)
+    console.warn(`[VertexBatch] No JSONL files found at prefix: ${gsPrefix}, listing all objects...`);
+    const allObjects = await listGcsObjects(gsPrefix, accessToken);
+    console.log(`[VertexBatch] All objects under prefix:`, allObjects);
+    const anyJsonl = allObjects.filter(name => name.endsWith(".jsonl"));
+    if (anyJsonl.length === 0) {
+      throw new Error(`배치 결과 파일을 찾을 수 없습니다. (prefix: ${gsPrefix})`);
+    }
+    jsonlFiles.push(...anyJsonl);
+  }
+
+  console.log(`[VertexBatch] Found ${jsonlFiles.length} result files:`, jsonlFiles);
+
+  // 모든 JSONL 파일의 내용을 합침
+  const allLines: string[] = [];
+  for (const fileName of jsonlFiles) {
+    const fileUri = `gs://${GCS_BUCKET}/${fileName}`;
+    // 토큰 갱신 가능성
+    accessToken = await fetchFreshToken();
+    const content = await downloadFromGcs(fileUri, accessToken);
+    const lines = content.split("\n").filter(line => line.trim());
+    allLines.push(...lines);
+  }
+
+  console.log(`[VertexBatch] Total output lines: ${allLines.length}, expected panels: ${panels.length}`);
+  onStatus?.(`결과 파싱 중... (${allLines.length}개 응답)`);
+
+  // 결과 파싱 — 입력 순서대로 매칭
+  const results: BatchPanelResult[] = [];
+
+  for (let i = 0; i < panels.length; i++) {
+    const panel = panels[i];
+
+    if (i >= allLines.length) {
+      results.push({ idx: panel.idx, error: "배치 결과에 해당 패널 응답이 없습니다." });
+      continue;
+    }
+
+    try {
+      const lineData = JSON.parse(allLines[i]);
+      // BatchPredictionJob 출력 형식: { response: { candidates: [...] } } 또는 { response: generateContent 응답 }
+      const response = lineData.response || lineData;
+      const candidates = response.candidates || [];
+
+      let found = false;
+      for (const candidate of candidates) {
+        const candidateParts = candidate.content?.parts || [];
+        for (const part of candidateParts) {
+          if (part.inlineData?.mimeType?.startsWith("image/")) {
+            const binaryStr = atob(part.inlineData.data);
+            const bytes = new Uint8Array(binaryStr.length);
+            for (let j = 0; j < binaryStr.length; j++) bytes[j] = binaryStr.charCodeAt(j);
+            const blob = new Blob([bytes], { type: part.inlineData.mimeType });
+            const blobUrl = URL.createObjectURL(blob);
+            results.push({ idx: panel.idx, imageUrl: blobUrl });
+            found = true;
+            break;
+          }
+        }
+        if (found) break;
+      }
+
+      if (!found) {
+        // 에러 응답 확인
+        const errorMsg = lineData.status?.message || lineData.error?.message || "이미지가 생성되지 않았습니다.";
+        results.push({ idx: panel.idx, error: errorMsg });
+      }
+    } catch (parseErr: any) {
+      console.error(`[VertexBatch] Failed to parse line ${i}:`, parseErr);
+      results.push({ idx: panel.idx, error: `결과 파싱 오류: ${parseErr.message}` });
+    }
+  }
+
+  results.sort((a, b) => a.idx - b.idx);
+  return results;
+}
+
+/**
+ * Vertex AI BatchPredictionJob을 이용한 패널 이미지 배치 생성.
+ * 실시간 대비 50% 비용 절감 (처리 시간은 더 걸림).
+ *
+ * 흐름: JSONL 준비 → GCS 업로드 → BatchPredictionJob 생성 → 폴링 → 결과 파싱
  */
 export async function generateVertexBatch(
   panels: BatchPanelRequest[],
   options?: {
-    concurrency?: number;
     onProgress?: (completed: number, total: number, idx: number, success: boolean) => void;
+    onStatus?: (msg: string) => void;
+    pollIntervalMs?: number;
   },
 ): Promise<BatchPanelResult[]> {
-  const concurrency = options?.concurrency || 3;
-  const results: BatchPanelResult[] = [];
+  if (panels.length === 0) return [];
+
+  // 1) 배치 작업 생성
+  const jobInfo = await createVertexBatchJob(panels, options?.onStatus);
+
+  // 2) 작업 완료까지 폴링
+  options?.onStatus?.("배치 작업 처리 중... (최대 수십 분 소요)");
+  const { outputUri } = await pollVertexBatchJob(
+    jobInfo.jobName,
+    (_state, msg) => options?.onStatus?.(msg),
+    options?.pollIntervalMs || 15000,
+  );
+
+  const finalOutputUri = outputUri || jobInfo.outputGcsUri || "";
+  if (!finalOutputUri) throw new Error("배치 작업 출력 경로를 찾을 수 없습니다.");
+
+  // 3) 결과 파싱
+  const results = await parseVertexBatchResults(finalOutputUri, panels, options?.onStatus);
+
+  // 4) onProgress 콜백 호출 (UI 갱신용)
   let completed = 0;
-
-  // 세마포어 기반 동시성 제어
-  const queue = [...panels];
-  const workers: Promise<void>[] = [];
-
-  for (let w = 0; w < Math.min(concurrency, queue.length); w++) {
-    workers.push(
-      (async () => {
-        while (queue.length > 0) {
-          const panel = queue.shift();
-          if (!panel) break;
-
-          try {
-            const { imageUrl } = await callVertexGeminiImage(
-              sanitizePromptForNSFW(panel.prompt),
-              panel.sizeKey,
-              panel.referenceImageUrls,
-            );
-            results.push({ idx: panel.idx, imageUrl });
-            completed++;
-            options?.onProgress?.(completed, panels.length, panel.idx, true);
-          } catch (err: any) {
-            results.push({ idx: panel.idx, error: err.message || "Unknown error" });
-            completed++;
-            options?.onProgress?.(completed, panels.length, panel.idx, false);
-            console.error(`[VertexBatch] Panel ${panel.idx} failed:`, err.message);
-          }
-        }
-      })()
-    );
+  for (const r of results) {
+    completed++;
+    options?.onProgress?.(completed, panels.length, r.idx, !!r.imageUrl);
   }
 
-  await Promise.all(workers);
-
-  // idx 순으로 정렬
-  results.sort((a, b) => a.idx - b.idx);
+  console.log(`[VertexBatch] Done: ${results.filter(r => r.imageUrl).length}/${results.length} succeeded`);
   return results;
 }

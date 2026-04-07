@@ -382,7 +382,7 @@ ${charContext}${locContext}${outfitContext}
   "panels": [
     {
       "panelNumber": 1,
-      "description": "이 패널의 장면 설명 (한글, 구체적으로)",
+      "description": "이 패널의 장면 설명 (한글). 원본 씬 텍스트의 시각적 디테일을 하나도 빠뜨리지 말 것 — 헤어스타일(묶음/풀림/올림 등), 손에 든 소품(국자, 책, 핸드폰 등), 구체적 자세(뒷모습, 앉은 자세 등), 피부·의상 노출 부위, 환경 소품(가스레인지, 찌개 냄비 등)을 모두 포함",
       "location": "이 패널의 구체적 장소 이름 (locations 배열의 name과 일치해야 함)",
       "locationCanonical": "이 패널 장소의 canonical 카테고리 (locations 배열의 locationCanonical과 일치해야 함)",
       "characters": ["등장하는 캐릭터 이름들"],
@@ -453,6 +453,13 @@ ${charContext}${locContext}${outfitContext}
    - 등장 캐릭터의 구체적 신체 동작(action), 손의 상태, 자세(pose), 표정의 시각적 묘사
    - "webtoon style, high quality, detailed, korean webtoon art style" 포함
 3. 대사, 효과음, 한국어 텍스트는 aiPrompt에 절대 포함하지 말 것.
+4. ★ 원본 씬 텍스트의 시각적 디테일을 모두 영어로 번역하여 포함하라:
+   - 헤어스타일: "hair neatly tied in a single ponytail", "hair down", "hair in a bun" 등
+   - 손에 든 소품: "holding a ladle", "carrying a bag", "gripping a phone" 등
+   - 구체적 환경 소품: "in front of a gas range with a bubbling pot of stew" 등
+   - 피부·의상 노출 정보: "nape exposed above the V-neck collar" 등
+   - 자세·방향: "seen from behind", "sitting cross-legged" 등
+   하나라도 빠뜨리면 다음 패널과의 시각적 연결이 끊어진다. 절대 생략하지 말 것.
 
 [동작 묘사 핵심 규칙 — 웹툰 패널 품질의 핵심, 반드시 준수]
 

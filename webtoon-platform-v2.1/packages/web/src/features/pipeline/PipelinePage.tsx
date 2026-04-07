@@ -175,6 +175,7 @@ export function PipelinePage() {
   const [generatedImages, setGeneratedImages] = useState<Record<number, string>>({});
   const [genProgress, setGenProgress] = useState<Record<number, string>>({});
   const [isGeneratingAll, setIsGeneratingAll] = useState(false);
+  const [batchStatusMsg, setBatchStatusMsg] = useState<string | null>(null);
 
   // 레퍼런스 이미지 생성 상태
   const [refImages, setRefImages] = useState<Record<string, string>>({}); // key: "char_이름" | "loc_이름"
@@ -421,19 +422,29 @@ export function PipelinePage() {
   const resolveBlobToFirebase = useCallback(async (url: string, subPath: string): Promise<string> => {
     if (!url.startsWith("blob:")) return url; // 이미 원격 URL이면 그대로
     const file = localFileMap.current.get(url);
-    if (!file) {
-      // File 객체가 없으면 fetch로 Blob 가져오기
+    if (file) {
+      const ext = file.name.split(".").pop() || "png";
+      const path = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/${subPath}_${Date.now()}.${ext}`;
+      return await uploadImage(path, file);
+    }
+    // localFileMap에 없으면 fetch 시도 (blob이 아직 유효한 경우)
+    try {
       const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`fetch failed: ${resp.status}`);
       const blob = await resp.blob();
       const path = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/${subPath}_${Date.now()}.png`;
       return await uploadImage(path, blob);
+    } catch (e) {
+      // blob URL 만료 — 다음 저장에서 재시도할 수 있도록 원본 URL 반환
+      console.warn(`[resolveBlobToFirebase] blob URL 만료, 변환 불가: ${url}`, e);
+      return url;
     }
-    const ext = file.name.split(".").pop() || "png";
-    const path = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/${subPath}_${Date.now()}.${ext}`;
-    return await uploadImage(path, file);
   }, [projectId, episodeId]);
 
   // ── blob URL → Firebase 일괄 변환 (저장 전) ──
+  // 이미지 생성 시 즉시 업로드가 실패한 경우의 안전망
+  const failedBlobUrls = useRef<Set<string>>(new Set());
+
   const resolveAllBlobUrls = useCallback(async (
     images: Record<number, string>,
     customRefs: Record<number, string[]>,
@@ -444,13 +455,21 @@ export function PipelinePage() {
 
     // generatedImages 내 blob URL 변환
     for (const [idx, url] of Object.entries(resolvedImages)) {
-      if (url.startsWith("blob:")) {
+      if (url.startsWith("blob:") && !failedBlobUrls.current.has(url)) {
         promises.push(
           resolveBlobToFirebase(url, `panels/panel_${idx}`).then(resolved => {
-            resolvedImages[Number(idx)] = resolved;
-            // 상태도 업데이트하여 이후 저장 시 중복 업로드 방지
-            setGeneratedImages(prev => ({ ...prev, [Number(idx)]: resolved }));
-          }).catch(e => console.warn(`[AutoSave] panel ${idx} blob resolve failed:`, e))
+            if (resolved.startsWith("blob:")) {
+              // 변환 실패 — 이 URL은 더 이상 시도하지 않음
+              failedBlobUrls.current.add(url);
+              console.warn(`[AutoSave] panel ${idx} blob 만료 — 재시도 중단`);
+            } else {
+              resolvedImages[Number(idx)] = resolved;
+              setGeneratedImages(prev => ({ ...prev, [Number(idx)]: resolved }));
+            }
+          }).catch(e => {
+            failedBlobUrls.current.add(url);
+            console.warn(`[AutoSave] panel ${idx} blob resolve failed:`, e);
+          })
         );
       }
     }
@@ -459,13 +478,21 @@ export function PipelinePage() {
     for (const [idx, urls] of Object.entries(resolvedRefs)) {
       const updatedUrls = [...urls];
       for (let i = 0; i < updatedUrls.length; i++) {
-        if (updatedUrls[i].startsWith("blob:")) {
+        if (updatedUrls[i].startsWith("blob:") && !failedBlobUrls.current.has(updatedUrls[i])) {
           const capturedIdx = idx;
           const capturedI = i;
+          const capturedUrl = updatedUrls[i];
           promises.push(
-            resolveBlobToFirebase(updatedUrls[capturedI], `custom_refs/panel_${capturedIdx}_ref_${capturedI}`).then(resolved => {
-              updatedUrls[capturedI] = resolved;
-            }).catch(e => console.warn(`[AutoSave] customRef ${capturedIdx}[${capturedI}] blob resolve failed:`, e))
+            resolveBlobToFirebase(capturedUrl, `custom_refs/panel_${capturedIdx}_ref_${capturedI}`).then(resolved => {
+              if (resolved.startsWith("blob:")) {
+                failedBlobUrls.current.add(capturedUrl);
+              } else {
+                updatedUrls[capturedI] = resolved;
+              }
+            }).catch(e => {
+              failedBlobUrls.current.add(capturedUrl);
+              console.warn(`[AutoSave] customRef ${capturedIdx}[${capturedI}] blob resolve failed:`, e);
+            })
           );
         }
       }
@@ -474,7 +501,6 @@ export function PipelinePage() {
 
     await Promise.all(promises);
 
-    // panelCustomRefs 상태도 업데이트
     if (promises.length > 0) {
       setPanelCustomRefs(resolvedRefs);
     }
@@ -841,6 +867,7 @@ export function PipelinePage() {
           cameraAngle: panel.cameraAngle,
           rawComposition: panel.composition || "",
           sceneDescription: panel.description || "",
+          aiPrompt: panel.aiPrompt || "",
           refTags: outfitRefs ? `[${outfitRefs}, ${locRef}]` : `[${locRef}]`,
           characterCount: panel.characters.length,
           characterAngles: (panel as any).characterAngles,
@@ -1243,14 +1270,37 @@ export function PipelinePage() {
         },
         referenceImageUrls: finalRefUrls.length > 0 ? finalRefUrls : undefined,
       });
-      setGeneratedImages(prev => ({ ...prev, [idx]: result.imageUrl }));
       setGenProgress(prev => ({ ...prev, [idx]: `완료 (${result.duration}초)` }));
+
+      // blob URL → 즉시 Firebase 업로드하여 영구 URL 확보
+      let finalImageUrl = result.imageUrl;
+      if (result.imageUrl.startsWith("blob:")) {
+        try {
+          setGenProgress(prev => ({ ...prev, [idx]: "Firebase 업로드 중..." }));
+          const blobResp = await fetch(result.imageUrl);
+          const blob = await blobResp.blob();
+          const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/panels/panel_${idx}_${Date.now()}.png`;
+          finalImageUrl = await uploadImage(storagePath, blob);
+          URL.revokeObjectURL(result.imageUrl); // blob URL 해제
+          console.log(`[Panel ${idx}] Firebase 업로드 완료: ${finalImageUrl}`);
+          setGenProgress(prev => ({ ...prev, [idx]: `완료 (${result.duration}초)` }));
+        } catch (e) {
+          console.warn(`[Panel ${idx}] Firebase 즉시 업로드 실패, blob URL 유지:`, e);
+          // 실패 시 localFileMap에 백업 저장
+          try {
+            const blobResp2 = await fetch(result.imageUrl);
+            const blob2 = await blobResp2.blob();
+            localFileMap.current.set(result.imageUrl, new File([blob2], `panel_${idx}.png`, { type: blob2.type || "image/png" }));
+          } catch { /* blob도 만료되면 포기 */ }
+        }
+      }
+      setGeneratedImages(prev => ({ ...prev, [idx]: finalImageUrl }));
 
       // ── Context Chain 업데이트 ──
       if (panel && analysis) {
         const panelResult: PanelResult = {
           panelIndex: idx,
-          storageUrl: result.imageUrl,
+          storageUrl: finalImageUrl,
           prompt,
           providerId: result.modelId,
         };
@@ -1277,13 +1327,14 @@ export function PipelinePage() {
     }
   }, [preparePanelData, editingPanels, kieReady, analysis, episodeId, projectId, registeredChars, registeredLocs, registeredOutfits]);
 
-  // ── 전체 패널 생성 (Vertex AI: 배치 병렬 / 기타: 순차) ──
+  // ── 전체 패널 생성 (Vertex AI: BatchPredictionJob 50% 할인 / 기타: 순차) ──
   const generateAllPanels = useCallback(async () => {
     if (!kieReady) {
       alert("Kie API Key가 필요합니다. 설정에서 KIE_API_KEY를 입력하세요.");
       return;
     }
     setIsGeneratingAll(true);
+    setBatchStatusMsg(null);
 
     // 생성할 패널 인덱스 필터
     const targetIndices: number[] = [];
@@ -1302,7 +1353,7 @@ export function PipelinePage() {
     const isVertex = selectedModel.startsWith("vertex/");
 
     if (isVertex) {
-      // ── Vertex AI 배치 병렬 생성 ──
+      // ── Vertex AI BatchPredictionJob (50% 비용 절감) ──
       const batchRequests: BatchPanelRequest[] = [];
       for (const idx of targetIndices) {
         const data = preparePanelData(idx);
@@ -1313,32 +1364,59 @@ export function PipelinePage() {
           sizeKey: "portrait_4_3",
           referenceImageUrls: data.referenceImageUrls.length > 0 ? data.referenceImageUrls : undefined,
         });
-        setGenProgress(prev => ({ ...prev, [idx]: "배치 대기 중..." }));
+        setGenProgress(prev => ({ ...prev, [idx]: "배치 작업 준비 중..." }));
       }
 
-      console.log(`[VertexBatch] Starting batch: ${batchRequests.length} panels, concurrency=3`);
+      console.log(`[VertexBatch] Starting BatchPredictionJob: ${batchRequests.length} panels`);
 
-      const results = await generateVertexBatch(batchRequests, {
-        concurrency: 3,
-        onProgress: (completed, total, idx, success) => {
-          if (success) {
-            setGenProgress(prev => ({ ...prev, [idx]: `완료 (${completed}/${total})` }));
+      try {
+        const results = await generateVertexBatch(batchRequests, {
+          onStatus: (msg) => {
+            setBatchStatusMsg(msg);
+            console.log(`[VertexBatch] Status: ${msg}`);
+          },
+          onProgress: (completed, total, idx, success) => {
+            if (success) {
+              setGenProgress(prev => ({ ...prev, [idx]: `완료 (${completed}/${total})` }));
+            } else {
+              setGenProgress(prev => ({ ...prev, [idx]: `실패 (${completed}/${total})` }));
+            }
+          },
+        });
+
+        // 결과 적용 + blob → 즉시 Firebase 업로드
+        let uploadedCount = 0;
+        for (const r of results) {
+          if (r.imageUrl) {
+            let finalUrl = r.imageUrl;
+            if (r.imageUrl.startsWith("blob:")) {
+              try {
+                const blobResp = await fetch(r.imageUrl);
+                const blob = await blobResp.blob();
+                const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/panels/panel_${r.idx}_${Date.now()}.png`;
+                finalUrl = await uploadImage(storagePath, blob);
+                URL.revokeObjectURL(r.imageUrl);
+                console.log(`[VertexBatch] Panel ${r.idx} Firebase 업로드 완료`);
+              } catch (e) {
+                console.warn(`[VertexBatch] Panel ${r.idx} Firebase 업로드 실패, blob URL 유지:`, e);
+              }
+            }
+            setGeneratedImages(prev => ({ ...prev, [r.idx]: finalUrl }));
+            uploadedCount++;
           } else {
-            setGenProgress(prev => ({ ...prev, [idx]: `실패 (${completed}/${total})` }));
+            setGenProgress(prev => ({ ...prev, [r.idx]: `실패: ${r.error}` }));
           }
-        },
-      });
+        }
 
-      // 결과 적용
-      for (const r of results) {
-        if (r.imageUrl) {
-          setGeneratedImages(prev => ({ ...prev, [r.idx]: r.imageUrl! }));
-        } else {
-          setGenProgress(prev => ({ ...prev, [r.idx]: `실패: ${r.error}` }));
+        console.log(`[VertexBatch] Done: ${uploadedCount}/${results.length} succeeded`);
+        setBatchStatusMsg(`배치 완료: ${uploadedCount}/${results.length}개 성공`);
+      } catch (err: any) {
+        console.error("[VertexBatch] Batch job failed:", err);
+        setBatchStatusMsg(`배치 실패: ${err.message}`);
+        for (const idx of targetIndices) {
+          setGenProgress(prev => ({ ...prev, [idx]: `배치 실패: ${err.message}` }));
         }
       }
-
-      console.log(`[VertexBatch] Done: ${results.filter(r => r.imageUrl).length}/${results.length} succeeded`);
     } else {
       // ── 기타 모델: 순차 생성 ──
       for (const i of targetIndices) {
@@ -1781,6 +1859,24 @@ export function PipelinePage() {
                 <button onClick={addPanel} style={S.addPanelBtn}>+ 패널 추가</button>
               </div>
             </div>
+
+            {/* 배치 작업 상태 표시 */}
+            {batchStatusMsg && (
+              <div style={{
+                padding: "8px 14px",
+                marginBottom: 10,
+                borderRadius: 6,
+                background: batchStatusMsg.includes("실패") ? "#FEF2F2" : "#F0F9FF",
+                color: batchStatusMsg.includes("실패") ? "#991B1B" : "#1E40AF",
+                fontSize: 13,
+                border: `1px solid ${batchStatusMsg.includes("실패") ? "#FECACA" : "#BFDBFE"}`,
+              }}>
+                {isGeneratingAll && !batchStatusMsg.includes("완료") && !batchStatusMsg.includes("실패") && (
+                  <span style={{ marginRight: 6 }}>⏳</span>
+                )}
+                {batchStatusMsg}
+              </div>
+            )}
 
             <div style={S.panelList}>
               {editingPanels.map((panel, idx) => {
