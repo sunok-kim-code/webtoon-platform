@@ -290,7 +290,22 @@ export function PipelinePage() {
         }
         if (saved.editingPanels?.length > 0) setEditingPanels(saved.editingPanels);
         if (saved.panelPrompts && Object.keys(saved.panelPrompts).length > 0) setPanelPrompts(saved.panelPrompts);
-        if (saved.generatedImages && Object.keys(saved.generatedImages).length > 0) setGeneratedImages(saved.generatedImages);
+        if (saved.generatedImages && Object.keys(saved.generatedImages).length > 0) {
+          // blob: URL은 세션 종료 시 만료되므로 복원 시 제거
+          const cleaned: Record<string, string> = {};
+          let staleCount = 0;
+          for (const [k, v] of Object.entries(saved.generatedImages)) {
+            if (typeof v === "string" && v.startsWith("blob:")) {
+              staleCount++;
+            } else {
+              cleaned[k] = v as string;
+            }
+          }
+          if (staleCount > 0) {
+            console.warn(`[Pipeline] 만료된 blob URL ${staleCount}개 제거됨 (세션 만료)`);
+          }
+          if (Object.keys(cleaned).length > 0) setGeneratedImages(cleaned);
+        }
         if (saved.refImages && Object.keys(saved.refImages).length > 0) setRefImages(saved.refImages);
         if (saved.panelCustomRefs && Object.keys(saved.panelCustomRefs).length > 0) setPanelCustomRefs(saved.panelCustomRefs);
         // v1.0 말풍선 데이터 복원
@@ -537,7 +552,10 @@ export function PipelinePage() {
         analysis,
         editingPanels,
         panelPrompts,
-        generatedImages: finalImages,
+        // blob: URL은 세션 만료 후 무효하므로 저장하지 않음
+        generatedImages: Object.fromEntries(
+          Object.entries(finalImages).filter(([, v]) => !v.startsWith("blob:"))
+        ),
         refImages,
         panelCustomRefs: finalCustomRefs,
       };
