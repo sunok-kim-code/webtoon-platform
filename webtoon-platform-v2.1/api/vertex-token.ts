@@ -2,7 +2,8 @@
 // Google Service Account로 OAuth2 access token 발급
 // 필요 환경변수: GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY
 
-import * as crypto from "node:crypto";
+import type { VercelRequest, VercelResponse } from "@vercel/node";
+import crypto from "crypto";
 
 function createJWT(clientEmail: string, privateKey: string): string {
   const now = Math.floor(Date.now() / 1000);
@@ -28,25 +29,24 @@ function createJWT(clientEmail: string, privateKey: string): string {
   return `${signInput}.${signature}`;
 }
 
-const CORS_HEADERS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // CORS 허용
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-export default async function handler(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 200, headers: CORS_HEADERS });
+    return res.status(200).end();
   }
 
   const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
   let privateKey = process.env.GOOGLE_PRIVATE_KEY;
 
   if (!clientEmail || !privateKey) {
-    return new Response(
-      JSON.stringify({ error: "Service account not configured", detail: "GOOGLE_CLIENT_EMAIL or GOOGLE_PRIVATE_KEY missing" }),
-      { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-    );
+    return res.status(500).json({
+      error: "Service account not configured",
+      detail: "GOOGLE_CLIENT_EMAIL or GOOGLE_PRIVATE_KEY missing",
+    });
   }
 
   // Vercel 환경변수에서 이스케이프된 줄바꿈 복원
@@ -63,28 +63,23 @@ export default async function handler(req: Request): Promise<Response> {
 
     if (!tokenRes.ok) {
       const errText = await tokenRes.text();
-      return new Response(
-        JSON.stringify({ error: "Token exchange failed", detail: errText }),
-        { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-      );
+      return res.status(500).json({
+        error: "Token exchange failed",
+        detail: errText,
+      });
     }
 
     const tokenData = await tokenRes.json();
 
-    return new Response(
-      JSON.stringify({
-        access_token: tokenData.access_token,
-        expires_in: tokenData.expires_in,
-        token_type: tokenData.token_type,
-      }),
-      { status: 200, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-    );
+    return res.status(200).json({
+      access_token: tokenData.access_token,
+      expires_in: tokenData.expires_in,
+      token_type: tokenData.token_type,
+    });
   } catch (err: any) {
-    return new Response(
-      JSON.stringify({ error: "Token generation failed", detail: err.message }),
-      { status: 500, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
-    );
+    return res.status(500).json({
+      error: "Token generation failed",
+      detail: err.message,
+    });
   }
 }
-
-export const config = { runtime: "nodejs" };
