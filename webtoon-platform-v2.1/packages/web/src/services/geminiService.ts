@@ -94,12 +94,13 @@ export interface GeminiAutoTagResult {
 export type GeminiModelId =
   | "gemini-2.5-flash"      // Google AI Studio (기본)
   | "gemini-3-flash"        // Kie.ai — 빠르고 저렴
-  | "gemini-3-pro";         // Kie.ai — 고품질
+  | "gemini-3-pro"          // Kie.ai — 고품질
+  | "gemini-3.1-pro-preview";  // Vertex AI — 최신 프리뷰
 
 export interface GeminiModelOption {
   id: GeminiModelId;
   name: string;
-  provider: "google" | "kie";
+  provider: "google" | "kie" | "vertex";
   description: string;
 }
 
@@ -121,6 +122,12 @@ export const GEMINI_MODELS: GeminiModelOption[] = [
     name: "Gemini 3 Pro",
     provider: "kie",
     description: "Kie.ai — 고품질, 정밀 분석",
+  },
+  {
+    id: "gemini-3.1-pro-preview",
+    name: "Gemini 3.1 Pro Preview",
+    provider: "vertex",
+    description: "Vertex AI — 최신 프리뷰, 고품질 분석",
   },
 ];
 
@@ -723,19 +730,58 @@ export async function analyzeSceneWithGemini(
   sceneText: string,
   existingCharacters: Character[] = [],
   existingLocations: Location[] = [],
-  options?: { sceneId?: string; existingOutfitIds?: string[] }
+  options?: { sceneId?: string; existingOutfitIds?: string[]; analysisModel?: GeminiModelId }
 ): Promise<GeminiSceneAnalysis> {
   const _outfitIds = options?.existingOutfitIds || [];
+  const analysisModel = options?.analysisModel || "gemini-3-pro";
 
   const prompt = buildSceneAnalysisPrompt(sceneText, existingCharacters, existingLocations, _outfitIds);
 
-  // 에피소드 분석은 무조건 gemini-3-pro 고정
-  const kieKey = getKieApiKey();
-  if (!kieKey) {
-    throw new Error("AI API 키가 설정되지 않았습니다. 설정에서 KIE_API_KEY를 입력해주세요.");
-  }
   const rawResponse = await (async () => {
-    const url = getKieEndpoint("gemini-3-pro");
+    // Vertex AI 모델인 경우
+    if (analysisModel === "gemini-3.1-pro-preview") {
+      const { projectId, location, accessToken } = getVertexConfig();
+      if (!projectId || !accessToken) {
+        throw new Error("Vertex AI 설정이 필요합니다. 설정에서 VERTEX_PROJECT_ID와 VERTEX_ACCESS_TOKEN을 입력해주세요.");
+      }
+      const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${analysisModel}:generateContent`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.7,
+            topK: 40,
+            topP: 0.95,
+            maxOutputTokens: 8192,
+            responseMimeType: "application/json",
+          },
+        }),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errMsg = errorData?.error?.message || response.statusText;
+        if (response.status === 401) {
+          throw new Error(`Vertex AI 토큰이 만료되었습니다 (401). 설정에서 Access Token을 갱신해주세요.`);
+        }
+        throw new Error(`Vertex AI (${analysisModel}) 오류 (${response.status}): ${errMsg}`);
+      }
+      const data = await response.json();
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error(`Vertex AI (${analysisModel})에서 빈 응답을 받았습니다.`);
+      return text;
+    }
+
+    // Kie.ai 모델 (gemini-3-pro 등)
+    const kieKey = getKieApiKey();
+    if (!kieKey) {
+      throw new Error("AI API 키가 설정되지 않았습니다. 설정에서 KIE_API_KEY를 입력해주세요.");
+    }
+    const url = getKieEndpoint(analysisModel);
     const response = await fetch(url, {
       method: "POST",
       headers: {
@@ -750,11 +796,11 @@ export async function analyzeSceneWithGemini(
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       const errMsg = errorData?.msg || errorData?.error?.message || response.statusText;
-      throw new Error(`Gemini 3 Pro 오류 (${response.status}): ${errMsg}`);
+      throw new Error(`${analysisModel} 오류 (${response.status}): ${errMsg}`);
     }
     const data = await response.json();
     const text = data?.choices?.[0]?.message?.content;
-    if (!text) throw new Error("Gemini 3 Pro에서 빈 응답을 받았습니다.");
+    if (!text) throw new Error(`${analysisModel}에서 빈 응답을 받았습니다.`);
     return text;
   })();
 
@@ -1071,6 +1117,23 @@ export function getCurrentModelId(): GeminiModelId {
 /** 모델 변경 */
 export function setGeminiModel(modelId: GeminiModelId): void {
   localStorage.setItem("GEMINI_MODEL", modelId);
+}
+
+/** 분석에 사용 가능한 모델 목록 */
+export const ANALYSIS_MODELS: GeminiModelOption[] = GEMINI_MODELS.filter(
+  m => m.provider === "kie" || m.provider === "vertex"
+);
+
+/** 현재 선택된 분석 모델 ID 반환 */
+export function getAnalysisModelId(): GeminiModelId {
+  const saved = localStorage.getItem("ANALYSIS_MODEL") as GeminiModelId;
+  const valid = ANALYSIS_MODELS.some(m => m.id === saved);
+  return valid ? saved : "gemini-3-pro";
+}
+
+/** 분석 모델 변경 */
+export function setAnalysisModel(modelId: GeminiModelId): void {
+  localStorage.setItem("ANALYSIS_MODEL", modelId);
 }
 
 /**

@@ -22,6 +22,10 @@ import {
   type GeminiCharacterAnalysis,
   type GeminiAutoTagResult,
   type PanelType,
+  type GeminiModelId,
+  ANALYSIS_MODELS,
+  getAnalysisModelId,
+  setAnalysisModel,
 } from "@/services/geminiService";
 import { ReferenceResolver, buildFallbackPrompt } from "@/services/referenceResolver";
 import { applyPromptRules, type PanelPromptContext, type SubjectInfo } from "@/services/promptRules";
@@ -201,6 +205,9 @@ export function PipelinePage() {
 
   // 이미지 모델 선택
   const [selectedModel, setSelectedModel] = useState(getSelectedImageModel());
+
+  // 분석 모델 선택
+  const [selectedAnalysisModel, setSelectedAnalysisModel] = useState<GeminiModelId>(getAnalysisModelId());
 
   // 아트 스타일 선택
   const [artStyleKey, setArtStyleKey] = useState(DEFAULT_ART_STYLE);
@@ -607,7 +614,7 @@ export function PipelinePage() {
         sceneText,
         registeredChars as Character[],
         registeredLocs as Location[],
-        { existingOutfitIds }
+        { existingOutfitIds, analysisModel: selectedAnalysisModel }
       );
       setAnalysisMode("gemini");
 
@@ -904,7 +911,7 @@ export function PipelinePage() {
     } finally {
       setIsAnalyzing(false);
     }
-  }, [sceneText, geminiReady, registeredChars, registeredLocs, setCurrentStep, projectId]);
+  }, [sceneText, geminiReady, registeredChars, registeredLocs, setCurrentStep, projectId, selectedAnalysisModel]);
 
   // ── 레퍼런스 이미지 생성 (캐릭터/장소) ──
   const generateRefImage = useCallback(async (refType: "char" | "loc", name: string, promptSnippet: string) => {
@@ -1766,13 +1773,29 @@ export function PipelinePage() {
             </div>
           )}
 
-          <button
-            onClick={handleAnalyzeScene}
-            disabled={!sceneText.trim() || isAnalyzing}
-            style={{ ...S.primaryBtn, opacity: !sceneText.trim() || isAnalyzing ? 0.5 : 1 }}
-          >
-            {isAnalyzing ? "AI 분석 중..." : "AI로 씬 분석하기 →"}
-          </button>
+          {/* ── 분석 모델 선택 + 분석 버튼 ── */}
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <select
+              value={selectedAnalysisModel}
+              onChange={e => {
+                const id = e.target.value as GeminiModelId;
+                setSelectedAnalysisModel(id);
+                setAnalysisModel(id);
+              }}
+              style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #d1d5db", fontSize: "13px", background: "#fff" }}
+            >
+              {ANALYSIS_MODELS.map(m => (
+                <option key={m.id} value={m.id}>{m.name} ({m.description})</option>
+              ))}
+            </select>
+            <button
+              onClick={handleAnalyzeScene}
+              disabled={!sceneText.trim() || isAnalyzing}
+              style={{ ...S.primaryBtn, opacity: !sceneText.trim() || isAnalyzing ? 0.5 : 1, flex: "none" }}
+            >
+              {isAnalyzing ? "AI 분석 중..." : "AI로 씬 분석하기 →"}
+            </button>
+          </div>
         </div>
       )}
 
