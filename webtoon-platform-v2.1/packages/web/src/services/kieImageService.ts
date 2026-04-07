@@ -501,7 +501,13 @@ async function callVertexGeminiImage(
   }
 
   const modelName = "gemini-3-pro-preview";
-  const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelName}:generateContent`;
+  // gemini-3-pro-preview는 global 엔드포인트에서만 사용 가능
+  const useGlobal = modelName.startsWith("gemini-3");
+  const apiLocation = useGlobal ? "global" : location;
+  const apiHost = useGlobal
+    ? "aiplatform.googleapis.com"
+    : `${location}-aiplatform.googleapis.com`;
+  const url = `https://${apiHost}/v1/projects/${projectId}/locations/${apiLocation}/publishers/google/models/${modelName}:generateContent`;
 
   // 레퍼런스 이미지가 있으면 base64로 변환하여 multipart 요청
   const parts: any[] = [];
