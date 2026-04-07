@@ -260,6 +260,9 @@ export function PipelinePage() {
     isTagging: false, selectedCharName: "", selectedLocName: "", tagOverrides: {},
   });
 
+  // ── 로컬 업로드 파일 보관 (blob URL → File 매핑) ──
+  const localFileMap = useRef<Map<string, File>>(new Map());
+
   // ── Context Chain (씬 연속성 추적) ──
   const contextChainRef = useRef<ContextChain | null>(null);
 
@@ -953,30 +956,22 @@ export function PipelinePage() {
     // 토글이므로 피커를 닫지 않음 (여러 개 선택/해제 가능)
   }, [generatedImages]);
 
-  // ── 커스텀 레퍼런스: 이미지 업로드 ──
-  const handleCustomRefUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // ── 커스텀 레퍼런스: 이미지 업로드 (로컬 Object URL) ──
+  const handleCustomRefUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     const targetIdx = customRefTargetPanel.current;
     if (!file || targetIdx < 0) return;
     e.target.value = ""; // 동일 파일 재업로드 허용
 
-    setIsUploadingRef(true);
-    try {
-      const path = `pipeline/${projectId || "default"}/${episodeId || "default"}/custom_refs/panel_${targetIdx}_${Date.now()}.${file.name.split(".").pop()}`;
-      const url = await uploadImage(path, file);
-      setPanelCustomRefs(prev => {
-        const existing = prev[targetIdx] || [];
-        return { ...prev, [targetIdx]: [...existing, url] };
-      });
-      console.log(`[Panel ${targetIdx}] Custom ref uploaded: ${url}`);
-    } catch (err: any) {
-      console.error(`[Panel ${targetIdx}] Custom ref upload failed:`, err);
-      alert("이미지 업로드에 실패했습니다: " + err.message);
-    } finally {
-      setIsUploadingRef(false);
-      setCustomRefPickerPanel(null);
-    }
-  }, [projectId, episodeId]);
+    const localUrl = URL.createObjectURL(file);
+    localFileMap.current.set(localUrl, file);
+    setPanelCustomRefs(prev => {
+      const existing = prev[targetIdx] || [];
+      return { ...prev, [targetIdx]: [...existing, localUrl] };
+    });
+    console.log(`[Panel ${targetIdx}] Custom ref added (local): ${localUrl}`);
+    setCustomRefPickerPanel(null);
+  }, []);
 
   // ── 패널 이미지 직접 업로드 ──
   const panelUploadRef = useRef<HTMLInputElement>(null);
@@ -987,28 +982,18 @@ export function PipelinePage() {
     panelUploadRef.current?.click();
   }, []);
 
-  const handlePanelImageUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePanelImageUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     const targetIdx = panelUploadTarget.current;
     if (!file || targetIdx < 0) return;
     e.target.value = "";
 
-    setGeneratingIndex(targetIdx);
-    setGenProgress(prev => ({ ...prev, [targetIdx]: "업로드 중..." }));
-    try {
-      const ext = file.name.split(".").pop() || "png";
-      const path = `pipeline/${projectId || "default"}/${episodeId || "default"}/panels/panel_${targetIdx}_${Date.now()}.${ext}`;
-      const url = await uploadImage(path, file);
-      setGeneratedImages(prev => ({ ...prev, [targetIdx]: url }));
-      setGenProgress(prev => ({ ...prev, [targetIdx]: "업로드 완료" }));
-      console.log(`[Panel ${targetIdx}] Image uploaded: ${url}`);
-    } catch (err: any) {
-      console.error(`[Panel ${targetIdx}] Image upload failed:`, err);
-      setGenProgress(prev => ({ ...prev, [targetIdx]: `업로드 실패: ${err.message}` }));
-    } finally {
-      setGeneratingIndex(null);
-    }
-  }, [projectId, episodeId]);
+    const localUrl = URL.createObjectURL(file);
+    localFileMap.current.set(localUrl, file);
+    setGeneratedImages(prev => ({ ...prev, [targetIdx]: localUrl }));
+    setGenProgress(prev => ({ ...prev, [targetIdx]: "업로드 완료 (로컬)" }));
+    console.log(`[Panel ${targetIdx}] Image added (local): ${localUrl}`);
+  }, []);
 
   // ── 커스텀 레퍼런스: 제거 ──
   const removeCustomRef = useCallback((panelIdx: number, refUrl: string) => {
@@ -1300,10 +1285,39 @@ export function PipelinePage() {
     }
   }, [generatedImages, editingPanels, analysis]);
 
+  // ── blob URL → Firebase Storage 업로드 헬퍼 ──
+  const resolveBlobToFirebase = useCallback(async (url: string, subPath: string): Promise<string> => {
+    if (!url.startsWith("blob:")) return url; // 이미 원격 URL이면 그대로
+    const file = localFileMap.current.get(url);
+    if (!file) {
+      // File 객체가 없으면 fetch로 Blob 가져오기
+      const resp = await fetch(url);
+      const blob = await resp.blob();
+      const path = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/${subPath}_${Date.now()}.png`;
+      return await uploadImage(path, blob);
+    }
+    const ext = file.name.split(".").pop() || "png";
+    const path = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/${subPath}_${Date.now()}.${ext}`;
+    return await uploadImage(path, file);
+  }, [projectId, episodeId]);
+
   // ── 레퍼런스 저장 확정 (Firebase 직접 저장 보장) ──
   const confirmSaveReference = useCallback(async () => {
-    const { panelIdx, imageUrl, autoTags, selectedCharName, selectedLocName, tagOverrides } = saveRefModal;
-    if (!imageUrl || !autoTags) return;
+    const { panelIdx, imageUrl: rawImageUrl, autoTags, selectedCharName, selectedLocName, tagOverrides } = saveRefModal;
+    if (!rawImageUrl || !autoTags) return;
+
+    // blob URL이면 Firebase Storage에 업로드하여 영구 URL로 변환
+    let imageUrl = rawImageUrl;
+    try {
+      imageUrl = await resolveBlobToFirebase(rawImageUrl, `refs/panel_${panelIdx}`);
+      if (imageUrl !== rawImageUrl) {
+        console.log(`[SaveRef] Blob URL → Firebase: ${imageUrl}`);
+      }
+    } catch (err: any) {
+      console.error("[SaveRef] Firebase upload failed:", err);
+      alert("Firebase 업로드 실패: " + err.message);
+      return;
+    }
 
     const store = useReferenceStore.getState();
     const pid = projectId || store.currentProjectId;
@@ -1389,7 +1403,7 @@ export function PipelinePage() {
     if (saved.length > 0) {
       alert(`레퍼런스 저장 완료: ${saved.join(", ")}`);
     }
-  }, [saveRefModal, episodeId, projectId]);
+  }, [saveRefModal, episodeId, projectId, resolveBlobToFirebase]);
 
   // ── 패널 편집 핸들러 ──
   const updatePanel = (idx: number, updates: Partial<GeminiPanelSuggestion>) => {
