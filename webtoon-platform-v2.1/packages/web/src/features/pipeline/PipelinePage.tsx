@@ -210,7 +210,8 @@ function analyzeSceneLocally(sceneText: string): LocalAnalysis {
   // #N 마커가 있으면 씬 블록 단위, 없으면 줄 단위(하위 호환)
   const rawLines = sceneText.split("\n").map(l => l.trim()).filter(l => l.length > 0);
   const dialoguePatternLocal = /^([가-힣a-zA-Z]{1,10})\s*[:：]\s*(?:\([^)]*\)\s*)?[""]?(.+?)[""]?\s*$/;
-  const sfxPatternLocal = /[(*]([가-힣a-zA-Z!?…]+(?:\s*[가-힣a-zA-Z!?…]+)*)[)*]/g;
+  // SFX 패턴: *별표 감싸기* 또는 (짧은 의성어/의태어) — (의상 A), (놀라며) 같은 지문은 제외
+  const sfxPatternLocal = /\*([가-힣a-zA-Z!?…]+(?:\s*[가-힣a-zA-Z!?…]+)*)\*|[（(]([가-힣]{1,4}[!?…~]+)[)）]/g;
 
   // 대사/SFX 추출 헬퍼 (로컬 분석용)
   const extractDialogueSfxLocal = (blockText: string) => {
@@ -228,7 +229,9 @@ function analyzeSceneLocally(sceneText: string): LocalAnalysis {
       let sfxMatch;
       sfxPatternLocal.lastIndex = 0;
       while ((sfxMatch = sfxPatternLocal.exec(line)) !== null) {
-        sfx.push(sfxMatch[1].trim());
+        // 캡처 그룹1 = *별표*, 캡처 그룹2 = (짧은 의성어)
+        const sfxText = (sfxMatch[1] || sfxMatch[2] || "").trim();
+        if (sfxText) sfx.push(sfxText);
         lineCopy = lineCopy.replace(sfxMatch[0], "").trim();
       }
       if (lineCopy.length > 0) visualLines.push(lineCopy);
@@ -920,12 +923,30 @@ export function PipelinePage() {
         const locRef = `ref:location/${panelLocName.replace(/\s/g, "_")}`;
 
         // ── Subject 배열 구성 (캐릭터별 성별/의상/동작/위치) ──
+        // 패널 비주얼 텍스트에서 캐릭터별 동작 추출
+        const visualDesc = (panel.composition || panel.description || "").trim();
+
         const subjects: SubjectInfo[] = panel.characters.map((name) => {
           const c = result.characters.find(ch => ch.name === name);
           const emotion = c ? (EMOTION_LABELS[c.emotion] || c.emotion) : "";
-          const action = (c as any)?.action && (c as any).action !== "standing"
+          const globalAction = (c as any)?.action && (c as any).action !== "standing"
             ? ACTION_LABELS[(c as any).action] || (c as any).action
             : "";
+
+          // 패널 비주얼 텍스트에서 이 캐릭터 관련 동작 문구 추출
+          let panelAction = "";
+          if (visualDesc) {
+            // 캐릭터 이름 뒤의 문구를 추출 (마침표/쉼표/다른 캐릭터 이름까지)
+            const otherNames = panel.characters.filter(n => n !== name);
+            const stopPattern = otherNames.length > 0
+              ? `(?=[.。,，]|${otherNames.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")}|$)`
+              : `(?=[.。]|$)`;
+            const nameRe = new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[이가은는을를의]?\\s*([^.。]+?)${stopPattern}`, "u");
+            const m = visualDesc.match(nameRe);
+            if (m && m[1]) panelAction = m[1].trim();
+          }
+          // 패널 동작 우선, 없으면 전역 동작
+          const action = panelAction || globalAction;
 
           // 성별: 레퍼런스 갤러리의 traits.gender
           const regChar = latestChars.find(rc =>
@@ -935,8 +956,15 @@ export function PipelinePage() {
             ? (regChar.traits.gender === "male" ? "Male" : regChar.traits.gender === "female" ? "Female" : "")
             : "";
 
-          // 의상 라벨: outfitId에서 의상 특징 추출
-          const outfitId = panel.characterOutfits?.[name] || "";
+          // 의상: panel.characterOutfits → 갤러리 fallback
+          let outfitId = panel.characterOutfits?.[name] || "";
+          if (!outfitId) {
+            // 갤러리에서 해당 캐릭터의 의상 중 첫 번째 매칭
+            const fallbackOutfit = latestOutfits.find(o =>
+              o.id.startsWith(name + "_") || o.id.startsWith(name)
+            );
+            if (fallbackOutfit) outfitId = fallbackOutfit.id;
+          }
           const outfitLabel = outfitId
             ? outfitId.split("_").slice(1).join(" ").replace(/_/g, " ")
             : "";

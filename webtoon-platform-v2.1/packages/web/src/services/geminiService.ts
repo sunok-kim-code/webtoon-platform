@@ -664,7 +664,8 @@ function mapClaudeResultToGemini(
   // #N 마커가 있으면 씬 블록 단위로, 없으면 줄 단위 폴백
   const allCharNames = claude.characters.map(c => c.name);
   const dialogueRe = /^([가-힣a-zA-Z]{1,10})\s*[:：]\s*(?:\([^)]*\)\s*)?[""]?(.+?)[""]?\s*$/;
-  const sfxRe = /[(*]([가-힣a-zA-Z!?…]+(?:\s*[가-힣a-zA-Z!?…]+)*)[)*]/g;
+  // SFX 패턴: *별표 감싸기* 또는 (짧은 의성어/의태어!?~) — (의상 A), (놀라며) 같은 지문은 제외
+  const sfxRe = /\*([가-힣a-zA-Z!?…]+(?:\s*[가-힣a-zA-Z!?…]+)*)\*|[（(]([가-힣]{1,4}[!?…~]+)[)）]/g;
 
   // 대사/SFX 추출 헬퍼
   function extractDialogueAndSfx(text: string): {
@@ -683,12 +684,13 @@ function mapClaudeResultToGemini(
         dialogues.push({ character: dlgMatch[1].trim(), text: dlgMatch[2].trim() });
         continue;  // 대사는 이미지 프롬프트에서 제외
       }
-      // SFX 추출 (괄호/별표로 감싸진 효과음)
+      // SFX 추출
       let lineCopy = line;
       let sfxMatch;
       sfxRe.lastIndex = 0;
       while ((sfxMatch = sfxRe.exec(line)) !== null) {
-        sfx.push(sfxMatch[1].trim());
+        const sfxText = (sfxMatch[1] || sfxMatch[2] || "").trim();
+        if (sfxText) sfx.push(sfxText);
         lineCopy = lineCopy.replace(sfxMatch[0], "").trim();
       }
       if (lineCopy.length > 0) {
