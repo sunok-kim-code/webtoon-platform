@@ -1616,6 +1616,11 @@ export function PipelinePage() {
               {KIE_IMAGE_MODELS.filter(m => m.mode === "text2img").map(m => (
                 <option key={m.id} value={m.id}>{m.name}</option>
               ))}
+              <optgroup label="── img2img (레퍼런스 기반) ──">
+                {KIE_IMAGE_MODELS.filter(m => m.mode === "img2img").map(m => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </optgroup>
             </select>
             <label style={S.modelLabel}>스타일</label>
             <select
