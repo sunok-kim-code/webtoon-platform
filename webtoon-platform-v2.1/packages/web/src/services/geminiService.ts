@@ -455,35 +455,59 @@ ${charContext}${locContext}${outfitContext}
 3. 대사, 효과음, 한국어 텍스트는 aiPrompt에 절대 포함하지 말 것.
 
 [동작 묘사 핵심 규칙 — 웹툰 패널 품질의 핵심, 반드시 준수]
+
 규칙 A: 추상적 감정 단어 금지 → 시각적 신체 동작으로 변환 (Action over Emotion)
   - '공포', '슬픔', '분노' 등 추상 감정 단어를 그대로 사용하지 말 것.
   - 반드시 그 감정이 신체에 어떻게 나타나는지 구체적으로 묘사하라.
   - 예시:
-    - 공포 → "breaking out in cold sweat, trembling hands, wide eyes with dilated pupils, tense shoulders"
-    - 슬픔 → "downcast eyes, slumped shoulders, lips pressed tightly together, hand loosely hanging"
-    - 분노 → "clenched jaw, furrowed brows, fists tightly balled, leaning forward aggressively"
-    - 놀람 → "mouth slightly open, eyebrows raised high, body leaning backward, hands frozen mid-air"
+    - 공포 → "wide eyes, tense shoulders" (단, '식은땀' 등 극단적 표현은 "a tired, weary look"으로 순화)
+    - 슬픔 → "downcast eyes, slumped shoulders, hand loosely hanging"
+    - 분노 → "furrowed brows, loosely curled fists" (주먹을 꽉 쥐는 대신 가볍게)
+    - 놀람 → "eyebrows raised, slightly pulling back"
   - 극단적 감정 표현은 지양하라. 일상적 불안을 '공포'로, 가벼운 걱정을 '고통'으로 과장하지 말 것.
 
-규칙 B: 손의 상태를 반드시 명시할 것 (Hands reveal emotion)
-  - 캐릭터가 감정을 느끼는 장면에서는 손이 무엇을 하고 있는지 반드시 포함하라.
-  - 예시: "tightly gripping the bed sheets", "white-knuckled fists", "nervously fidgeting with phone", "fingers intertwined on lap", "hand covering mouth"
-
-규칙 C: 역동적 포즈 키워드 사용 (Dynamic Pose)
-  - 단순 상태 묘사('standing', 'sitting', 'lying')만 쓰지 말고, 움직임이 느껴지는 구체적 동작을 포함하라.
+규칙 B: 동적 액션을 정적 상태로 순화 (Softened Interaction)
+  - AI는 '쥐다', '뒤척이다' 같은 동사를 만나면 과도하게 힘을 준 그림을 생성한다.
+  - 힘이 들어간 동사 대신 '상태'나 '접촉' 위주로 묘사하라.
   - 예시:
-    - "뒤척임" → "tossing and turning in bed, tangled in sheets"
-    - "걸어 들어옴" → "striding into the room, one hand pushing the door open"
-    - "서 있음" → "leaning against the kitchen counter with arms crossed"
-  - 원문에 구체적 동작이 있으면(식은땀, 시트를 꽉 쥠, 뒤척임 등) 반드시 aiPrompt에 모두 반영하라. 생략 금지.
+    - "Clenching the sheet" → "Hand resting on the wrinkled sheet"
+    - "Tossing and turning" → "Lying restlessly with messy hair"
+    - "Wide eyes" → "Blankly staring at the ceiling"
+    - "Cold sweat" → "A tired, weary look"
+    - "Tense shoulders" → "Subtle anxiety in the posture"
+  - 손의 상태는 반드시 명시하되, 힘을 빼고 자연스럽게: "hand lightly touching", "fingers loosely resting"
 
-규칙 D: 카메라는 디테일을 따라갈 것 (Camera follows detail)
-  - 손가락의 움직임, 땀방울, 눈물 등 미세한 디테일이 중요한 장면에서는 wide shot을 피하고 medium shot 또는 close-up을 사용하라.
-  - 방 전체를 보여줘야 하는 establishing shot이 아닌 한, 감정적 장면은 카메라를 가까이 당겨라.
+규칙 C: 조명의 단일화와 부정어 활용 (Lighting Control)
+  - 광원을 하나로 고정하고 구체적인 빛의 경로를 적어줄 것.
+  - "cool ambient night lighting" 대신 "Soft moonlight from the window, gentle shadows"처럼 구체적으로.
+  - AI가 그림자를 너무 진하게 넣지 못하게 반드시 포함: "NO harsh contrast, NO extreme darkness"
+  - 조명 설정이 상충하면 '합성 사진' 느낌이 나므로, 인물과 배경의 조명이 동일해야 한다.
+
+규칙 D: 인물과 배경의 비례 고정 (Scale & Perspective)
+  - 인물을 배경의 일부로 배치하라. 환경에 맞는 정확한 비율을 강조할 것.
+  - 반드시 포함: "Character is correctly scaled to the environment."
+  - Medium shot이 인물로 꽉 차면 배경 가구와의 크기 차이가 도드라진다.
+  - Full body visible이 필요하면 Full Shot이나 Wide Shot을 사용하라.
+
+규칙 E: 감정의 담백한 묘사 (Subtle Emotion)
+  - '식은땀', '공포', 'agony' 같은 자극적 단어는 AI에게 호러 영화를 찍으라는 신호가 된다.
+  - 자극적인 단어를 빼고 '피곤함', '공허함', '무기력'으로 우회하라.
+  - 표정 묘사에는 반드시 "NO extreme facial expressions" 포함.
+  - 예시:
+    - "horror" → "unease", "cold sweat" → "a tired, weary look"
+    - "agony" → "weariness", "panic" → "restless unease"
+
+[프롬프트 작성 공식 — 이 순서대로 aiPrompt를 작성하라]
+1. [통합 스타일]: 인물과 배경에 동일한 채색 기법. 혼합 렌더링 금지.
+2. [구도]: Full shot / Wide shot 기본. 환경에 맞는 정확한 비율.
+3. [상태/포즈]: 힘 뺀 묘사 — 접촉, 상태 위주. 손의 상태 명시.
+4. [표정]: 담백한 감정. NO extreme faces.
+5. [조명/분위기]: 단일 광원, 구체적 빛 경로, gentle shadows, NO harsh contrast.
+6. [레퍼런스 연결]: Consistent with [ref:인물] and [ref:배경].
 
 [카메라 앵글 연출 규칙]
-- 첫 패널은 반드시 wide shot으로 장소 전체를 소개 (establishing shot)
-- 감정 변화가 큰 순간은 close-up으로 처리
+- 첫 패널은 반드시 wide shot/full shot으로 장소 전체를 소개 (establishing shot)
+- 감정 변화가 큰 순간은 medium shot으로 처리 (close-up보다 full body 맥락 유지)
 - 대화 장면은 medium shot 또는 over shoulder
 - 마지막 패널은 감정적 여운을 남기는 구도
 - 캐릭터 promptSnippet은 해당 캐릭터의 시각적 특징을 영어로 상세히

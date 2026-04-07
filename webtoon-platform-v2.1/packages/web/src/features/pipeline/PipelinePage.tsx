@@ -1121,9 +1121,17 @@ export function PipelinePage() {
     let prompt = panelPrompts[idx] || panel?.aiPrompt || panel?.description;
     if (!prompt) return;
 
-    // ── 아트 스타일 접두어 적용 ──
+    // ── 규칙1: 스타일 통일 — 선택된 아트 스타일 적용, 충돌 스타일 제거 ──
     const artStyle = ART_STYLES[artStyleKey];
     if (artStyle?.prefix && !prompt.startsWith(artStyle.prefix)) {
+      // 기존 프롬프트 내 충돌 스타일 키워드 제거 (혼합 렌더링 방지)
+      const conflictPatterns = [
+        /\bStyle:\s*[^.]*\.\s*/gi,  // "Style: ..." 섹션 제거 (promptRules가 생성한 기본 스타일)
+        /\bNO mixed rendering techniques\.?\s*/gi,
+      ];
+      for (const pat of conflictPatterns) {
+        prompt = prompt.replace(pat, "");
+      }
       prompt = artStyle.prefix + prompt;
     }
 

@@ -155,6 +155,51 @@ export const STATIC_ACTION_ENHANCE: Record<string, string> = {
   "walking": "mid-stride with arms in motion",
 };
 
+// ─── 규칙2: 동적 액션 → 정적 상태 순화 (Softened Interaction) ──
+// AI가 힘을 과도하게 넣는 동사를 부드러운 '상태/접촉' 묘사로 순화
+export const ACTION_SOFTENER: Record<string, string> = {
+  // 영어
+  "clenching the sheet": "hand resting on the wrinkled sheet",
+  "clenching": "lightly gripping",
+  "gripping tightly": "hand resting on",
+  "tightly gripping": "lightly holding",
+  "white-knuckled fists": "loosely curled fingers",
+  "tossing and turning": "lying restlessly with messy hair",
+  "wide eyes": "blankly staring",
+  "eyes wide open": "gazing with a hollow look",
+  "trembling hands": "slightly unsteady hands",
+  "fists tightly balled": "loosely curled fists",
+  "leaning forward aggressively": "leaning slightly forward",
+  "breaking out in cold sweat": "a tired, weary look",
+  "cold sweat": "a tired, weary look",
+  "tense shoulders": "subtle anxiety in the posture",
+  "body leaning backward": "slightly pulling back",
+  // 한국어
+  "꽉 쥐다": "주름진 시트에 손을 얹다",
+  "뒤척이다": "머리카락이 흐트러진 채 누워 있다",
+  "눈을 크게 뜨다": "멍하니 응시하다",
+  "식은땀": "지친 기색",
+  "경직된 어깨": "자세에 깃든 미묘한 불안함",
+};
+
+// ─── 규칙5: 감정의 담백한 묘사 (Subtle Emotion) ────────────
+// 자극적 감정 단어 → 부드러운 우회 표현
+export const EMOTION_SOFTENER: Record<string, string> = {
+  "horror": "unease",
+  "terror": "quiet anxiety",
+  "panic": "restless unease",
+  "agony": "weariness",
+  "anguish": "quiet sorrow",
+  "rage": "frustration",
+  "fury": "simmering irritation",
+  "screaming": "exhaling sharply",
+  "공포": "불안",
+  "공포감": "긴장감",
+  "절망": "무기력",
+  "고통": "피곤함",
+  "분노": "답답함",
+};
+
 // ─── Subject 정보 (캐릭터별 개별 항목) ─────────────────────
 
 export interface SubjectInfo {
@@ -206,20 +251,42 @@ export interface PanelPromptContext {
 
 export function applyPromptRules(ctx: PanelPromptContext): string {
 
-  // ── 1. Style (고정) ──
-  const styleSection = "Style: Webtoon style, clean lineart, flat color.";
+  // ── 규칙2+5: 동작 순화 + 감정 담백화 헬퍼 ──
+  function softenText(text: string): string {
+    let result = text;
+    // 동적 액션 → 정적 상태 순화
+    for (const [intense, soft] of Object.entries(ACTION_SOFTENER)) {
+      const re = new RegExp(intense.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+      result = result.replace(re, soft);
+    }
+    // 자극적 감정 → 담백한 표현
+    for (const [strong, gentle] of Object.entries(EMOTION_SOFTENER)) {
+      const re = new RegExp(`\\b${strong.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi");
+      result = result.replace(re, gentle);
+    }
+    return result;
+  }
 
-  // ── 2. Setting (배경 + 조명 통합, 긍정형만) ──
+  // ── 1. Style (규칙1: 통합 스타일 — 아트 스타일은 PipelinePage에서 prefix로 관리,
+  //    여기서는 충돌 방지용 기본 지시만) ──
+  const styleSection = "Style: Consistent art style across character and background. NO mixed rendering techniques.";
+
+  // ── 2. Setting (배경 + 규칙3: 조명 단일화 + 부정어 활용) ──
   const lightingHint = buildLightingShort(ctx.timeLabel, ctx.moodLabel);
   const settingParts = [ctx.locationName];
   if (ctx.timeLabel) settingParts.push(ctx.timeLabel);
   if (lightingHint) settingParts.push(lightingHint);
+  // 규칙3: 강한 대비/극단적 어둠 금지
+  settingParts.push("NO harsh contrast, NO extreme darkness");
   const settingSection = `Setting: ${settingParts.join(", ")}.`;
 
-  // ── 3. Camera (구도 명확화, 부가 설명 없음) ──
-  const cameraSection = `Camera: ${ctx.cameraAngle}.`;
+  // ── 3. Camera (규칙4: 비례 고정 — 환경과 인물의 정확한 스케일) ──
+  let cameraWithScale = ctx.cameraAngle;
+  // 규칙4: 비례 고정 힌트 추가
+  cameraWithScale += ". Character is correctly scaled to the environment";
+  const cameraSection = `Camera: ${cameraWithScale}.`;
 
-  // ── 4. Subject N (캐릭터별 개별 항목 — 성별 태그 포함, 추상 감정→시각적 동작 변환) ──
+  // ── 4. Subject N (캐릭터별 개별 항목 — 규칙2: 동작 순화, 규칙5: 감정 담백화 적용) ──
   const subjectSections: string[] = [];
   ctx.subjects.forEach((subj, i) => {
     const tag = [subj.gender, subj.outfit].filter(Boolean).join(", ");
@@ -227,22 +294,21 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
 
     const details: string[] = [];
 
-    // 동작: 단순 상태 동사면 보강
+    // 동작: 단순 상태 동사면 보강, 그 후 순화 적용
     if (subj.action) {
       const enhanced = STATIC_ACTION_ENHANCE[subj.action];
-      details.push(enhanced || subj.action);
+      details.push(softenText(enhanced || subj.action));
     }
 
     if (subj.position) details.push(subj.position);
 
-    // 감정: 추상 단어면 시각적 신체 묘사로 변환
+    // 감정: 추상 단어면 시각적 신체 묘사로 변환, 그 후 순화 적용
     if (subj.expression) {
       const visual = EMOTION_TO_VISUAL[subj.expression];
       if (visual) {
-        details.push(visual);
+        details.push(softenText(visual));
       } else {
-        // 매핑에 없으면 원본 유지
-        details.push(subj.expression);
+        details.push(softenText(subj.expression));
       }
     }
 
@@ -253,6 +319,9 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
       details.push("convey emotion through body language");
     }
 
+    // 규칙5: 극단 표정 금지
+    details.push("NO extreme facial expressions");
+
     const refTag = subj.outfitRef ? ` [${subj.outfitRef}]` : "";
     const detailStr = details.length > 0 ? `: ${details.join(", ")}` : "";
     subjectSections.push(`Subject ${i + 1}: ${label}${detailStr}.${refTag}`);
@@ -261,7 +330,6 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
   // ── 5. Depth (입체감 — 캐릭터 배치 포함) ──
   let depthSection = "";
   if (ctx.characterCount >= 2 && ctx.subjects.length >= 2) {
-    // Subject 정보에서 position 기반으로 레이어 배치 결정
     const layers: string[] = [];
     const fgChar = ctx.subjects.find(s => s.position?.includes("foreground"));
     const mgChar = ctx.subjects.find(s => s.position?.includes("midground") || (!s.position?.includes("foreground") && !s.position?.includes("background")));
@@ -282,7 +350,7 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
   // ── 6. Reference Tags (레퍼런스 이미지 참조) ──
   const locRef = ctx.refTags || "";
 
-  // ── 최종 조립 — 긍정형만, 부정 지시어 없음, Continuity 없음 ──
+  // ── 최종 조립 ──
   return [
     styleSection,
     settingSection,
@@ -299,32 +367,34 @@ export function applyPromptRules(ctx: PanelPromptContext): string {
 // 헬퍼 함수
 // ══════════════════════════════════════════════════════════════
 
-/** Setting 섹션에 통합될 짧은 조명 힌트 (긍정형만) */
+/** Setting 섹션에 통합될 짧은 조명 힌트
+ *  규칙3: 광원을 하나로 고정, 구체적 빛의 경로 명시, gentle shadows */
 function buildLightingShort(timeLabel: string, moodLabel: string): string {
   const t = (timeLabel || "").toLowerCase();
   const m = (moodLabel || "").toLowerCase();
 
   let light = "";
 
-  // 시간대 기반
+  // 시간대 기반 — 구체적 광원 경로
   if (t.includes("morning") || t === "아침" || t === "오전") {
-    light = "soft natural light";
+    light = "soft morning sunlight from the window, gentle shadows";
   } else if (t.includes("afternoon") || t === "낮" || t === "오후") {
-    light = "bright natural daylight";
+    light = "bright daylight from overhead, even illumination";
   } else if (t.includes("evening") || t === "저녁" || t === "석양") {
-    light = "warm golden-hour light";
+    light = "warm golden-hour light from the side window, long soft shadows";
   } else if (t.includes("night") || t === "밤" || t === "야간") {
-    light = "cool ambient night lighting";
+    light = "soft moonlight from the window, gentle shadows";
   } else {
-    light = "natural ambient light";
+    light = "soft natural ambient light, gentle shadows";
   }
 
-  // 분위기 보정 (짧게)
+  // 분위기 보정 — 부드러운 톤만
   if (m === "warm" || m === "따뜻") light += ", warm interior glow";
-  else if (m === "cold" || m === "차가운") light += ", cool fluorescent";
-  else if (m === "tense" || m === "긴장") light += ", harsh directional shadows";
-  else if (m === "dark" || m === "어둠") light += ", dim low-key";
+  else if (m === "cold" || m === "차가운") light += ", cool fluorescent overhead";
+  else if (m === "tense" || m === "긴장") light += ", slightly dim, focused lighting";
+  else if (m === "dark" || m === "어둠") light += ", dim but visible, low-key";
   else if (m === "peaceful" || m === "평화") light += ", soft diffused";
+  else if (m === "melancholic" || m === "우울") light += ", subdued melancholic atmosphere";
 
   return light;
 }
