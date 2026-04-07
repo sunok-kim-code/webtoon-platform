@@ -1240,8 +1240,7 @@ async function buildRefParts(referenceImageUrls?: string[]): Promise<any[]> {
   const parts: any[] = [];
   if (!referenceImageUrls || referenceImageUrls.length === 0) return parts;
 
-  const maxRefs = Math.min(referenceImageUrls.length, 2);
-  for (let i = 0; i < maxRefs; i++) {
+  for (let i = 0; i < referenceImageUrls.length; i++) {
     try {
       let refBase64 = "";
       let mimeType = "image/png";
