@@ -36,6 +36,7 @@ function deepRemoveUndefined(obj: unknown): unknown {
 let _app: any = null;
 let _db: any = null;
 let _storage: any = null;
+let _auth: any = null;
 
 // v1 호환: localStorage 기반 설정 관리
 const FIREBASE_CONFIG_KEY = "firebase_config";
@@ -94,10 +95,21 @@ export async function initFirebase(config?: Record<string, string>) {
     const { initializeApp } = await import("firebase/app");
     const { getFirestore } = await import("firebase/firestore");
     const { getStorage: getFirebaseStorage } = await import("firebase/storage");
+    const { getAuth, signInAnonymously } = await import("firebase/auth");
 
     _app = initializeApp(cfg);
     _db = getFirestore(_app);
     _storage = getFirebaseStorage(_app);
+    _auth = getAuth(_app);
+
+    // 익명 로그인 — Storage Rules에서 auth != null 조건 충족
+    try {
+      const cred = await signInAnonymously(_auth);
+      console.log("[Firebase] Anonymous auth OK:", cred.user.uid);
+    } catch (authErr) {
+      console.warn("[Firebase] Anonymous auth failed (Storage uploads may fail):", authErr);
+    }
+
     console.log("[Firebase] Initialized with project:", cfg.projectId);
   } catch (error) {
     console.error("[Firebase] Initialization failed:", error);
