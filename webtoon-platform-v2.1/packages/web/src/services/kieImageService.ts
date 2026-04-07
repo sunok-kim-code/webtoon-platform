@@ -189,6 +189,16 @@ export const KIE_IMAGE_MODELS: KieImageModel[] = [
     supportedSizes: ["square_hd", "portrait_4_3", "landscape_16_9"],
     defaultSize: "square_hd",
   },
+  // ── Vertex AI (직접 호출) ──
+  {
+    id: "vertex/gemini-3-pro",
+    name: "Vertex Gemini 3 Pro",
+    category: "google",
+    mode: "text2img",
+    description: "Vertex AI 직접 호출 — Gemini 3 Pro 이미지 생성 (OAuth 토큰 필요)",
+    supportedSizes: ["square_hd", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9"],
+    defaultSize: "portrait_4_3",
+  },
 ];
 
 // ─── API 호출 ──────────────────────────────────────────────
@@ -209,7 +219,15 @@ export function setSelectedImageModel(modelId: string): void {
 }
 
 export function isKieImageConfigured(): boolean {
-  return getKieApiKey().length > 10;
+  if (getKieApiKey().length > 10) return true;
+  // Vertex AI 직접 호출 모델이 선택된 경우 Vertex 설정 확인
+  const model = getSelectedImageModel();
+  if (model.startsWith("vertex/")) {
+    const projectId = localStorage.getItem("VERTEX_PROJECT_ID") || "";
+    const token = localStorage.getItem("VERTEX_ACCESS_TOKEN") || "";
+    return !!(projectId && token);
+  }
+  return false;
 }
 
 // ─── 모델별 API 필드 매핑 ──────────────────────────────────
@@ -458,6 +476,124 @@ async function callGptImageEndpoint(
   return { imageUrl: urls[0] };
 }
 
+/**
+ * Vertex AI Gemini 이미지 생성 (직접 호출 — generateContent + responseModalities IMAGE)
+ * OAuth 토큰 인증, base64 이미지 결과를 Blob URL로 변환
+ */
+async function callVertexGeminiImage(
+  prompt: string,
+  sizeKey: string,
+  referenceImageUrls?: string[],
+): Promise<{ imageUrl: string }> {
+  const projectId = localStorage.getItem("VERTEX_PROJECT_ID") || "";
+  const location = localStorage.getItem("VERTEX_LOCATION") || "us-central1";
+  const accessToken = localStorage.getItem("VERTEX_ACCESS_TOKEN") || "";
+
+  if (!projectId || !accessToken) {
+    throw new Error("Vertex AI 설정이 필요합니다. VERTEX_PROJECT_ID와 VERTEX_ACCESS_TOKEN을 설정하세요.");
+  }
+
+  const modelName = "gemini-2.5-pro-preview-06-05";
+  const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${modelName}:generateContent`;
+
+  // 레퍼런스 이미지가 있으면 base64로 변환하여 multipart 요청
+  const parts: any[] = [];
+
+  // 레퍼런스 이미지 추가 (최대 2개 — Vertex 제한 고려)
+  if (referenceImageUrls && referenceImageUrls.length > 0) {
+    const maxRefImages = Math.min(referenceImageUrls.length, 2);
+    for (let i = 0; i < maxRefImages; i++) {
+      try {
+        const refRes = await fetch(referenceImageUrls[i]);
+        const refBlob = await refRes.blob();
+        const refBase64 = await blobToBase64(refBlob);
+        const mimeType = refBlob.type || "image/png";
+        parts.push({
+          inlineData: { mimeType, data: refBase64 },
+        });
+      } catch (e) {
+        console.warn(`[VertexImage] Failed to fetch ref image ${i}:`, e);
+      }
+    }
+    // 레퍼런스 포함 시 프롬프트에 지시 추가
+    parts.push({
+      text: `Use the above reference images as style and character reference. Generate a new image based on the following description:\n\n${prompt}`,
+    });
+  } else {
+    parts.push({ text: prompt });
+  }
+
+  // 종횡비 → 픽셀 크기
+  const ar = toAspectRatioValue(sizeKey);
+  const aspectRatio = ar; // Vertex Gemini accepts aspect_ratio as string
+
+  const body = {
+    contents: [{ role: "user", parts }],
+    generationConfig: {
+      responseModalities: ["IMAGE", "TEXT"],
+      responseMimeType: "application/json",
+      // aspectRatio가 지원되면 추가
+    },
+  };
+
+  console.log(`[VertexImage] Calling Vertex AI: model=${modelName}, refs=${referenceImageUrls?.length || 0}, ar=${aspectRatio}`);
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (response.status === 401) {
+    throw new Error("Vertex AI 토큰이 만료되었습니다 (401). VERTEX_ACCESS_TOKEN을 갱신하세요.");
+  }
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Vertex AI 오류 (${response.status}): ${errText.substring(0, 300)}`);
+  }
+
+  const data = await response.json();
+
+  // 응답에서 이미지 추출
+  const candidates = data.candidates || [];
+  for (const candidate of candidates) {
+    const candidateParts = candidate.content?.parts || [];
+    for (const part of candidateParts) {
+      if (part.inlineData?.mimeType?.startsWith("image/")) {
+        // base64 → Blob URL
+        const binaryStr = atob(part.inlineData.data);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+        const blob = new Blob([bytes], { type: part.inlineData.mimeType });
+        const blobUrl = URL.createObjectURL(blob);
+        console.log(`[VertexImage] Image generated (${blob.size} bytes)`);
+        return { imageUrl: blobUrl };
+      }
+    }
+  }
+
+  throw new Error("Vertex AI: 응답에 이미지가 없습니다. 프롬프트를 수정해보세요.");
+}
+
+/** Blob → base64 문자열 (data URI prefix 제거) */
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = reader.result as string;
+      // "data:image/png;base64,..." → base64 부분만 추출
+      const base64 = result.includes(",") ? result.split(",")[1] : result;
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 export async function createImageTask(
   prompt: string,
   options?: {
@@ -640,6 +776,20 @@ async function generateImageOnce(
     console.log(`[KieImage] GPT Image done in ${elapsed}s: ${imageUrl}`);
 
     return { imageUrl, taskId: "gpt-direct", modelId, duration: elapsed };
+  }
+
+  // ── Vertex AI Gemini: 직접 호출 (동기식) ──
+  if (modelId.startsWith("vertex/")) {
+    options?.onProgress?.("generating", 0);
+    console.log(`[VertexImage] Direct call: model=${modelId}, refs=${options?.referenceImageUrls?.length || 0}`);
+
+    const { imageUrl } = await callVertexGeminiImage(prompt, rawSize, options?.referenceImageUrls);
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+
+    options?.onProgress?.("success", elapsed);
+    console.log(`[VertexImage] Done in ${elapsed}s`);
+
+    return { imageUrl, taskId: "vertex-direct", modelId, duration: elapsed };
   }
 
   // ── 일반 모델: createTask + polling ──

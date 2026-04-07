@@ -917,16 +917,24 @@ export function PipelinePage() {
     setIsGeneratingAllRefs(false);
   }, [kieReady, analysis, refImages, generateRefImage]);
 
-  // ── 커스텀 레퍼런스: 이전 패널 선택 ──
+  // ── 커스텀 레퍼런스: 이전 패널 선택 (토글 — 이미 선택된 패널 다시 클릭 시 제거) ──
   const addPrevPanelAsRef = useCallback((targetIdx: number, sourceIdx: number) => {
     const url = generatedImages[sourceIdx];
     if (!url) return;
     setPanelCustomRefs(prev => {
       const existing = prev[targetIdx] || [];
-      if (existing.includes(url)) return prev; // 중복 방지
+      if (existing.includes(url)) {
+        // 이미 선택됨 → 제거 (토글)
+        const updated = existing.filter(u => u !== url);
+        if (updated.length === 0) {
+          const { [targetIdx]: _, ...rest } = prev;
+          return rest;
+        }
+        return { ...prev, [targetIdx]: updated };
+      }
       return { ...prev, [targetIdx]: [...existing, url] };
     });
-    setCustomRefPickerPanel(null);
+    // 토글이므로 피커를 닫지 않음 (여러 개 선택/해제 가능)
   }, [generatedImages]);
 
   // ── 커스텀 레퍼런스: 이미지 업로드 ──
@@ -1047,36 +1055,54 @@ export function PipelinePage() {
       }
     }
 
-    // 2) 캐릭터 레퍼런스 이미지 + 의상 라이브러리 레퍼런스
+    // 2) 캐릭터 의상 레퍼런스 이미지
     if (analysis && panel) {
       for (const charName of panel.characters) {
-        // 2a) 의상 라이브러리에서 패널 outfitNormalizedId에 해당하는 레퍼런스 우선
-        const outfitNormalizedId = panel.characterOutfits?.[charName];
-        if (outfitNormalizedId) {
-          const outfitEntry = registeredOutfits.find(o => o.id === outfitNormalizedId);
-          if (outfitEntry?.references?.length) {
-            // 가장 품질 높은 의상 레퍼런스 이미지 사용
-            const best = [...outfitEntry.references].sort((a, b) => (b.quality || 0) - (a.quality || 0))[0];
-            if (best?.storageUrl?.startsWith("http")) {
-              referenceImageUrls.push(best.storageUrl);
-              console.log(`[Panel ${idx}] Outfit ref: ${outfitNormalizedId} → ${best.storageUrl}`);
-            }
+        let outfitRefAdded = false;
+
+        // 2a) panel.characterOutfits에서 정확 매칭
+        let outfitId = (panel as any).characterOutfits?.[charName];
+        let outfitEntry = outfitId ? registeredOutfits.find(o => o.id === outfitId) : undefined;
+
+        // 2b) 정확 매칭 실패 → 갤러리에서 캐릭터 이름으로 퍼지 매칭
+        if (!outfitEntry) {
+          outfitEntry = registeredOutfits.find(o => o.id.startsWith(charName + "_") || o.id.startsWith(charName));
+          if (outfitEntry) outfitId = outfitEntry.id;
+        }
+
+        // 2c) 의상 엔트리에서 레퍼런스 이미지 추출
+        if (outfitEntry?.references?.length) {
+          const best = [...outfitEntry.references].sort((a, b) => (b.quality || 0) - (a.quality || 0))[0];
+          if (best?.storageUrl?.startsWith("http") && !referenceImageUrls.includes(best.storageUrl)) {
+            referenceImageUrls.push(best.storageUrl);
+            outfitRefAdded = true;
+            console.log(`[Panel ${idx}] Outfit ref: ${outfitId} → ${best.storageUrl}`);
           }
         }
 
-        // 2b) 기본 캐릭터 레퍼런스 이미지 (fallback)
-        const charRefImg = refImages[`char_${charName}`];
-        if (charRefImg && charRefImg.startsWith("http")) {
-          referenceImageUrls.push(charRefImg);
+        // 2d) 파이프라인 생성 레퍼런스 이미지 (fallback)
+        if (!outfitRefAdded) {
+          const charRefImg = refImages[`char_${charName}`];
+          if (charRefImg && charRefImg.startsWith("http") && !referenceImageUrls.includes(charRefImg)) {
+            referenceImageUrls.push(charRefImg);
+          }
         }
       }
     }
 
-    // 3) 장소 레퍼런스 이미지 (패널 장소 우선, 대표 장소 fallback)
+    // 3) 장소 레퍼런스 이미지 (파이프라인 생성 → 갤러리 fallback)
     if (analysis) {
       const panelLocName = panel?.location || analysis.location.name;
-      const locRefImg = refImages[`loc_${panelLocName}`] || refImages[`loc_${analysis.location.name}`];
-      if (locRefImg && locRefImg.startsWith("http")) {
+      let locRefImg = refImages[`loc_${panelLocName}`] || refImages[`loc_${analysis.location.name}`];
+
+      // 갤러리에 등록된 장소 레퍼런스 fallback
+      if (!locRefImg) {
+        const regLoc = registeredLocs.find(l => l.name === panelLocName)
+          || registeredLocs.find(l => l.name === analysis.location.name);
+        locRefImg = (regLoc as any)?.references?.[0]?.storageUrl;
+      }
+
+      if (locRefImg && locRefImg.startsWith("http") && !referenceImageUrls.includes(locRefImg)) {
         referenceImageUrls.push(locRefImg);
       }
     }
@@ -1090,9 +1116,7 @@ export function PipelinePage() {
       prompt += "\nDo NOT render any text, letters, words, sound effects, onomatopoeia, or speech bubbles in the image.";
     }
 
-    if (finalRefUrls.length > 0) {
-      console.log(`[Panel ${idx}] Passing ${finalRefUrls.length} reference images: prev=${idx > 0 && generatedImages[idx-1] ? 'yes' : 'no'}, chars=${panel?.characters?.length || 0}, loc=${analysis?.location?.name || 'none'}`);
-    }
+    console.log(`[Panel ${idx}] Reference images: total=${finalRefUrls.length}, custom=${customRefs.length}, prev=${idx > 0 && generatedImages[idx-1] ? 'yes' : 'no'}, chars=${panel?.characters?.length || 0}, loc=${analysis?.location?.name || 'none'}`, finalRefUrls);
 
     setGeneratingIndex(idx);
     setGenProgress(prev => ({ ...prev, [idx]: "대기 중..." }));
@@ -1797,31 +1821,39 @@ export function PipelinePage() {
                                     <div style={{ fontSize: "11px", color: "#9CA3AF", padding: "4px 0" }}>이전 패널 없음</div>
                                   ) : (
                                     <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", marginBottom: "8px" }}>
-                                      {Array.from({ length: idx }, (_, i) => i).map(pi => (
-                                        <div
-                                          key={`pick_${pi}`}
-                                          onClick={() => generatedImages[pi] ? addPrevPanelAsRef(idx, pi) : undefined}
-                                          style={{
-                                            width: "48px", height: "48px", borderRadius: "4px", overflow: "hidden",
-                                            border: generatedImages[pi] ? "2px solid #2563EB" : "1px solid #E5E7EB",
-                                            cursor: generatedImages[pi] ? "pointer" : "not-allowed",
-                                            opacity: generatedImages[pi] ? 1 : 0.4,
-                                            position: "relative",
-                                          }}
-                                          title={generatedImages[pi] ? `Panel ${pi + 1} 선택` : `Panel ${pi + 1} (이미지 없음)`}
-                                        >
-                                          {generatedImages[pi] ? (
-                                            <img src={generatedImages[pi]} alt={`P${pi + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                                          ) : (
-                                            <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#F3F4F6", fontSize: "10px", color: "#9CA3AF" }}>
-                                              {pi + 1}
-                                            </div>
-                                          )}
-                                          <span style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,0.5)", color: "#fff", fontSize: "8px", textAlign: "center", lineHeight: "14px" }}>
-                                            P{pi + 1}
-                                          </span>
-                                        </div>
-                                      ))}
+                                      {Array.from({ length: idx }, (_, i) => i).map(pi => {
+                                        const isSelected = (panelCustomRefs[idx] || []).includes(generatedImages[pi]);
+                                        return (
+                                          <div
+                                            key={`pick_${pi}`}
+                                            onClick={() => generatedImages[pi] ? addPrevPanelAsRef(idx, pi) : undefined}
+                                            style={{
+                                              width: "48px", height: "48px", borderRadius: "4px", overflow: "hidden",
+                                              border: isSelected ? "2px solid #10B981" : generatedImages[pi] ? "2px solid #2563EB" : "1px solid #E5E7EB",
+                                              cursor: generatedImages[pi] ? "pointer" : "not-allowed",
+                                              opacity: generatedImages[pi] ? 1 : 0.4,
+                                              position: "relative",
+                                            }}
+                                            title={isSelected ? `Panel ${pi + 1} (선택됨 — 클릭하여 해제)` : generatedImages[pi] ? `Panel ${pi + 1} 선택` : `Panel ${pi + 1} (이미지 없음)`}
+                                          >
+                                            {generatedImages[pi] ? (
+                                              <img src={generatedImages[pi]} alt={`P${pi + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                            ) : (
+                                              <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#F3F4F6", fontSize: "10px", color: "#9CA3AF" }}>
+                                                {pi + 1}
+                                              </div>
+                                            )}
+                                            {isSelected && (
+                                              <div style={{ position: "absolute", top: 0, right: 0, background: "#10B981", color: "#fff", fontSize: "10px", width: "16px", height: "16px", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "0 4px 0 4px" }}>
+                                                ✓
+                                              </div>
+                                            )}
+                                            <span style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: isSelected ? "rgba(16,185,129,0.7)" : "rgba(0,0,0,0.5)", color: "#fff", fontSize: "8px", textAlign: "center", lineHeight: "14px" }}>
+                                              P{pi + 1}
+                                            </span>
+                                          </div>
+                                        );
+                                      })}
                                     </div>
                                   )}
                                   <div style={{ borderTop: "1px solid #E5E7EB", paddingTop: "6px" }}>
