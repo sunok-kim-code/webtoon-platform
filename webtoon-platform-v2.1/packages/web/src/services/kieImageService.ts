@@ -131,6 +131,33 @@ export const KIE_IMAGE_MODELS: KieImageModel[] = [
     supportedSizes: ["square_hd", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9"],
     defaultSize: "portrait_4_3",
   },
+  {
+    id: "flux-2/pro-image-to-image",
+    name: "Flux 2 Pro img2img",
+    category: "flux",
+    mode: "img2img",
+    description: "레퍼런스 이미지 기반 변환 (1~8장)",
+    supportedSizes: ["square_hd", "portrait_4_3", "portrait_3_2", "portrait_16_9", "landscape_4_3", "landscape_3_2", "landscape_16_9"],
+    defaultSize: "portrait_4_3",
+  },
+  {
+    id: "flux-kontext-pro",
+    name: "Flux Kontext Pro",
+    category: "flux",
+    mode: "img2img",
+    description: "이미지 편집 + 텍스트 생성 (캐릭터 일관성)",
+    supportedSizes: ["square_hd", "portrait_4_3", "portrait_3_2", "portrait_16_9", "landscape_4_3", "landscape_16_9"],
+    defaultSize: "portrait_4_3",
+  },
+  {
+    id: "flux-kontext-max",
+    name: "Flux Kontext Max",
+    category: "flux",
+    mode: "img2img",
+    description: "Flux Kontext 최고 품질 모드",
+    supportedSizes: ["square_hd", "portrait_4_3", "portrait_3_2", "portrait_16_9", "landscape_4_3", "landscape_16_9"],
+    defaultSize: "portrait_4_3",
+  },
   // ── Grok ──
   {
     id: "grok-imagine/text-to-image",
@@ -138,6 +165,15 @@ export const KIE_IMAGE_MODELS: KieImageModel[] = [
     category: "grok",
     mode: "text2img",
     description: "xAI Grok 이미지 생성",
+    supportedSizes: ["square_hd", "portrait_16_9", "landscape_16_9"],
+    defaultSize: "square_hd",
+  },
+  {
+    id: "grok-imagine/image-to-image",
+    name: "Grok Imagine img2img",
+    category: "grok",
+    mode: "img2img",
+    description: "레퍼런스 이미지 기반 변환",
     supportedSizes: ["square_hd", "portrait_16_9", "landscape_16_9"],
     defaultSize: "square_hd",
   },
@@ -240,15 +276,17 @@ export function isKieImageConfigured(): boolean {
  * Pattern A (aspect_ratio + negative_prompt): google/imagen4, imagen4-fast, imagen4-ultra
  * Pattern B (aspect_ratio only):              google/nano-banana, nano-banana-2, z-image, gemini-3-pro
  * Pattern C (aspect_ratio + quality):         seedream/4.5, seedream/5-lite
- * Pattern D (aspect_ratio + resolution):      flux-2/pro
+ * Pattern D (aspect_ratio + resolution):      flux-2/pro-text-to-image
  * Pattern E (image_size keyword):             bytedance/seedream*, qwen, ideogram/v3, wan
  * Pattern F (GPT Image — 별도 endpoint):      gpt-image/1.5
  * Pattern G (Grok — 제한적 aspect_ratio):     grok-imagine/*
  * Pattern H (aspect_ratio + image_input + resolution): nano-banana-pro (img2img)
+ * Pattern I (flux-2/pro img2img):             flux-2/pro-image-to-image (input_urls + aspect_ratio + resolution)
+ * Pattern J (Flux Kontext — 별도 endpoint):   flux-kontext-pro, flux-kontext-max
  * BROKEN:   ideogram/character — reference_image_urls 필수, text2img 불가
  */
 
-type ModelPattern = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "BROKEN";
+type ModelPattern = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "BROKEN";
 
 function getModelPattern(modelId: string): ModelPattern {
   // Pattern F: GPT Image — 별도 엔드포인트
@@ -263,8 +301,14 @@ function getModelPattern(modelId: string): ModelPattern {
   // Pattern C: Seedream 4.5 / 5 Lite (aspect_ratio + quality)
   if (modelId.startsWith("seedream/")) return "C";
 
-  // Pattern D: Flux 2 Pro (aspect_ratio + resolution)
+  // Pattern I: Flux 2 Pro Image-to-Image (input_urls + aspect_ratio + resolution)
+  if (modelId === "flux-2/pro-image-to-image") return "I";
+
+  // Pattern D: Flux 2 Pro text-to-image (aspect_ratio + resolution)
   if (modelId.startsWith("flux-2/")) return "D";
+
+  // Pattern J: Flux Kontext (별도 엔드포인트)
+  if (modelId.startsWith("flux-kontext")) return "J";
 
   // Pattern G: Grok Imagine — aspect_ratio 허용값이 제한적 ("1:1", "16:9", "9:16"만 안전)
   if (modelId.startsWith("grok-imagine/")) return "G";
@@ -413,6 +457,18 @@ function buildModelInput(
         ...(refs ? { image_input: refs } : {}),  // ← image_input (image_urls 아님!)
       };
 
+    case "I": // Flux 2 Pro Image-to-Image: input_urls (필수) + aspect_ratio + resolution
+      return {
+        prompt,
+        input_urls: refs || [],
+        aspect_ratio: ar,
+        resolution: "1K",
+        nsfw_checker: false,
+      };
+
+    case "J": // Flux Kontext — 이 함수에서 처리하지 않음 (별도 엔드포인트)
+      throw new Error("__FLUX_KONTEXT__");
+
     case "BROKEN":
       throw new Error("Ideogram Character는 text2img를 지원하지 않습니다. 다른 모델을 선택해주세요.");
 
@@ -476,6 +532,52 @@ async function callGptImageEndpoint(
   }
 
   return { imageUrl: urls[0] };
+}
+
+/**
+ * Flux Kontext 이미지 생성/편집 (별도 엔드포인트 — createTask + polling)
+ * inputImage가 있으면 편집 모드, 없으면 텍스트→이미지 모드
+ */
+async function callFluxKontextEndpoint(
+  prompt: string,
+  sizeKey: string,
+  modelVariant: string,
+  apiKey: string,
+  referenceImageUrls?: string[],
+): Promise<KieTaskResult> {
+  const ar = toAspectRatioValue(sizeKey);
+
+  const body: Record<string, unknown> = {
+    prompt,
+    aspectRatio: ar,
+    outputFormat: "png",
+    model: modelVariant, // "flux-kontext-pro" or "flux-kontext-max"
+    safetyTolerance: 2,
+  };
+
+  // 레퍼런스 이미지가 있으면 첫 번째를 inputImage로 사용 (편집 모드)
+  if (referenceImageUrls && referenceImageUrls.length > 0) {
+    body.inputImage = referenceImageUrls[0];
+  }
+
+  console.log(`[FluxKontext] Call: model=${modelVariant}, inputImage=${!!body.inputImage}`);
+
+  const response = await fetch(`${KIE_BASE}/api/v1/flux/kontext/generate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  const data = await response.json();
+
+  if (data.code !== 200) {
+    throw new Error(`Flux Kontext 생성 오류 (${data.code}): ${data.msg || "Unknown error"}`);
+  }
+
+  return { taskId: data.data.taskId };
 }
 
 /**
@@ -680,6 +782,11 @@ export async function createImageTask(
     throw new Error("__GPT_IMAGE__"); // generateImage()에서 분기 처리
   }
 
+  // Flux Kontext는 별도 엔드포인트
+  if (getModelPattern(modelId) === "J") {
+    throw new Error("__FLUX_KONTEXT__"); // generateImage()에서 분기 처리
+  }
+
   const input = buildModelInput(modelId, prompt, rawSize, options?.seed, options?.referenceImageUrls);
 
   const body: Record<string, unknown> = { model: modelId, input };
@@ -853,6 +960,55 @@ async function generateImageOnce(
     console.log(`[VertexImage] Done in ${elapsed}s`);
 
     return { imageUrl, taskId: "vertex-direct", modelId, duration: elapsed };
+  }
+
+  // ── Flux Kontext: 별도 엔드포인트 + polling ──
+  if (getModelPattern(modelId) === "J") {
+    const apiKey = getKieApiKey();
+    if (!apiKey) throw new Error("Kie API Key가 필요합니다.");
+
+    options?.onProgress?.("generating", 0);
+    console.log(`[FluxKontext] Dispatch: model=${modelId}, refs=${options?.referenceImageUrls?.length || 0}`);
+
+    const { taskId } = await callFluxKontextEndpoint(
+      prompt, rawSize, modelId, apiKey, options?.referenceImageUrls,
+    );
+
+    console.log(`[FluxKontext] Task created: ${taskId}`);
+
+    // 폴링 (최대 5분, 3초 간격 → 점진적 증가)
+    const MAX_POLL_MS = 300_000;
+    let interval = 3000;
+
+    while (Date.now() - startTime < MAX_POLL_MS) {
+      await new Promise(r => setTimeout(r, interval));
+
+      const detail = await getTaskDetail(taskId);
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+
+      options?.onProgress?.(detail.state, elapsed);
+
+      if (detail.state === "success") {
+        if (detail.resultUrls.length === 0) {
+          throw new Error("Flux Kontext 생성 성공했지만 결과 URL이 없습니다.");
+        }
+        console.log(`[FluxKontext] Done in ${elapsed}s: ${detail.resultUrls[0]}`);
+        return {
+          imageUrl: detail.resultUrls[0],
+          taskId,
+          modelId,
+          duration: elapsed,
+        };
+      }
+
+      if (detail.state === "fail") {
+        throw new Error(`Flux Kontext 생성 실패: ${detail.failMsg || "Unknown error"}`);
+      }
+
+      if (interval < 10000) interval = Math.min(interval + 2000, 10000);
+    }
+
+    throw new Error("Flux Kontext 생성 시간 초과 (5분). 다시 시도해주세요.");
   }
 
   // ── 일반 모델: createTask + polling ──
