@@ -1249,32 +1249,9 @@ export function PipelinePage() {
       prompt = artStyle.prefix + prompt;
     }
 
-    // ── Reference Resolver로 프롬프트 강화 (제외된 레퍼런스 제외) ──
-    if (analysis && panel) {
-      const store = useReferenceStore.getState();
-      const currentResolver = new ReferenceResolver(
-        store.characters as Character[],
-        store.locations as Location[],
-        contextChainRef.current,
-        store.outfits
-      );
-      // 제외된 캐릭터/장소 필터링
-      const activeChars = panel.characters.filter(cn => !excluded?.has(`char_${cn}`));
-      const panelCharAnalysis = analysis.characters.find(c => activeChars.includes(c.name));
-      const panelOutfit = panelCharAnalysis?.outfit || undefined;
-      const panelLocName = panel.location || analysis.location.name;
-      const locExcluded = excluded?.has(`loc_${panelLocName}`);
-      const panelLoc = (analysis as any).locations?.find((l: any) => l.name === panelLocName) || analysis.location;
-      const resolved = currentResolver.resolve({
-        characters: activeChars, emotion: panel.emotion, outfit: panelOutfit,
-        location: locExcluded ? "" : panelLocName, timeOfDay: locExcluded ? "" : panelLoc.timeOfDay, mood: locExcluded ? "" : panelLoc.mood,
-        currentEpisode: episodeId || "", currentPanel: idx,
-      });
-      if (resolved.length > 0) {
-        const refLabels = resolved.map(r => r.label).join(", ");
-        if (!prompt.includes("[References:")) prompt += `\n\n[References: ${refLabels}]`;
-      }
-    }
+    // ── Reference Resolver 텍스트 주입 제거 ──
+    // 레퍼런스 이미지는 URL로 직접 전달되므로 텍스트 기반 [References: ...] 불필요
+    // (이전: ReferenceResolver.resolve()로 context/character 라벨을 프롬프트에 삽입 → 이미지 품질 저하 원인)
 
     // ── 레퍼런스 이미지 URL 수집 (씬 그룹 앵커 + 이전 패널 최우선) ──
     const anchorRefs: string[] = [];     // 씬 그룹 앵커 패널 (스타일 드리프트 방지)
@@ -1377,59 +1354,10 @@ export function PipelinePage() {
       { prev: prevPanelRefs.length, anchor: anchorRefs.length, char: charOutfitRefs.length, custom: customRefUrls.length, loc: locationRefs.length }
     );
 
-    // ── 글로벌 스타일 지시문 (분석 결과에서 추출) ──
-    const globalStyle = (analysis as any)?.globalStyleDirective;
-    if (globalStyle) {
-      prompt = `[GLOBAL STYLE] ${globalStyle}\n\n${prompt}`;
-    }
-
-    // ── 서사 흐름 마커 ──
-    const totalPanels = editingPanels.length;
-    const narrativePos = (panel as any)?.narrativePosition || `Panel ${idx + 1} of ${totalPanels}`;
-    const continuityTag = (panel as any)?.continuityTag || "";
-    const delta = (panel as any)?.deltaFromPrevious || "";
-
-    prompt += `\n\n[NARRATIVE FLOW] ${narrativePos}. This is part of a continuous webtoon episode — each panel flows naturally into the next.`;
-    if (continuityTag) {
-      const tagDescriptions: Record<string, string> = {
-        establishing: "This is an ESTABLISHING shot introducing a new scene/location.",
-        continued_action: "CONTINUED ACTION from the previous panel — same scene, ongoing moment.",
-        reaction: "REACTION shot — this panel shows the response to what just happened.",
-        time_skip: "TIME SKIP — same location but time has passed.",
-        scene_transition: "SCENE TRANSITION — new location, maintain consistent art style.",
-      };
-      prompt += ` ${tagDescriptions[continuityTag] || continuityTag}`;
-    }
-
-    const prevExcluded = excluded?.has("prev");
-    if (idx > 0) {
-      // ── 델타 서술: 이전 패널 대비 변경점만 명시 ──
-      if (delta && !prevExcluded) {
-        prompt += `\n\n[DELTA FROM PREVIOUS PANEL — changes only] ${delta}`;
-      }
-
-      // ── 이전 패널 컨텍스트 (prev 제외 시 스킵) ──
-      if (!prevExcluded) {
-        const prevPanel = editingPanels[idx - 1];
-        if (prevPanel) {
-          const prevDesc = prevPanel.sceneDescription || prevPanel.description || "";
-          if (prevDesc) {
-            prompt += `\n\n[CONTINUITY NOTE — DO NOT DRAW THIS] The previous panel depicted: "${prevDesc}". This is context only — do NOT include any elements from the previous panel unless they are also described in the current panel above. Only use this to maintain consistent lighting, time of day, and overall mood.`;
-          }
-        }
-      }
-
-      if (generatedImages[idx - 1] && !prevExcluded) {
-        prompt += "\n\n[STYLE LOCK] The FIRST reference image is the immediately preceding panel — it has the HIGHEST priority. Match its art style EXACTLY: same linework, color palette, shading, character proportions, and skin tone. Copy the STYLE only, not the CONTENT. Maintain visual flow so the panels feel like consecutive frames from the same artist.";
-        if (anchorRefs.length > 0) {
-          prompt += " Additional reference images include the SCENE ANCHOR (first panel of this scene group) and the EPISODE ANCHOR (first panel of the episode) — use them to prevent style drift over many panels.";
-        }
-      }
-
-      prompt += "\nDo NOT render any text, letters, words, sound effects, onomatopoeia, or speech bubbles in the image.";
-    } else {
-      // 첫 패널에도 텍스트 금지 추가
-      prompt += "\nDo NOT render any text, letters, words, sound effects, onomatopoeia, or speech bubbles in the image.";
+    // ── 텍스트 렌더링 금지 + 최소한의 스타일 힌트만 ──
+    prompt += "\nDo NOT render any text, letters, words, sound effects, onomatopoeia, or speech bubbles in the image.";
+    if (idx > 0 && generatedImages[idx - 1] && !excluded?.has("prev")) {
+      prompt += "\nMatch the art style of the reference images exactly.";
     }
 
     return { prompt, referenceImageUrls: finalRefUrls };
