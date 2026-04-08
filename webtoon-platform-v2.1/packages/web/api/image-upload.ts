@@ -39,26 +39,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
     const imageUrl = body?.imageUrl;
+    const imageBase64 = body?.imageBase64;
     const storagePath = body?.storagePath;
+    const contentType = body?.contentType || "image/png";
 
-    if (!imageUrl || !storagePath) {
-      console.log("[image-upload] Missing params:", { imageUrl: !!imageUrl, storagePath: !!storagePath });
-      return res.status(400).json({ error: "Missing imageUrl or storagePath" });
+    if (!storagePath || (!imageUrl && !imageBase64)) {
+      console.log("[image-upload] Missing params:", { imageUrl: !!imageUrl, imageBase64: !!imageBase64, storagePath: !!storagePath });
+      return res.status(400).json({ error: "Missing storagePath and (imageUrl or imageBase64)" });
     }
 
-    console.log("[image-upload] Downloading image:", imageUrl.substring(0, 80));
+    let imgBuffer: Buffer;
 
-    // 1) 이미지 다운로드
-    const imgRes = await fetch(imageUrl);
-    if (!imgRes.ok) {
-      const errMsg = `Image fetch failed (${imgRes.status})`;
-      console.error("[image-upload]", errMsg);
-      return res.status(502).json({ error: errMsg });
+    if (imageBase64) {
+      // base64 데이터 직접 수신 (CORS 우회)
+      imgBuffer = Buffer.from(imageBase64, "base64");
+      console.log("[image-upload] Base64 image received:", imgBuffer.length, "bytes");
+    } else {
+      // URL에서 다운로드 시도
+      console.log("[image-upload] Downloading image:", imageUrl!.substring(0, 80));
+      const imgRes = await fetch(imageUrl!, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Accept": "image/*,*/*",
+        },
+      });
+      if (!imgRes.ok) {
+        const errMsg = `Image fetch failed (${imgRes.status})`;
+        console.error("[image-upload]", errMsg);
+        return res.status(502).json({ error: errMsg });
+      }
+      const imgArrayBuffer = await imgRes.arrayBuffer();
+      imgBuffer = Buffer.from(imgArrayBuffer);
+      console.log("[image-upload] Image downloaded:", imgBuffer.length, "bytes");
     }
-    const imgArrayBuffer = await imgRes.arrayBuffer();
-    const imgBuffer = Buffer.from(imgArrayBuffer);
-    const contentType = imgRes.headers.get("content-type") || "image/png";
-    console.log("[image-upload] Image downloaded:", imgBuffer.length, "bytes,", contentType);
 
     // 2) Access Token 발급
     const clientEmail = process.env.GOOGLE_CLIENT_EMAIL || "";

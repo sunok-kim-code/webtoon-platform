@@ -1308,7 +1308,7 @@ export function PipelinePage() {
       });
       setGenProgress(prev => ({ ...prev, [idx]: `완료 (${result.duration}초)` }));
 
-      // 즉시 Firebase 업로드하여 영구 URL 확보 (서버 API 사용)
+      // 즉시 Firebase 업로드 (프록시 → base64 → 서버 API)
       let finalImageUrl = result.imageUrl;
       const needsUpload = !result.imageUrl.startsWith("https://firebasestorage.googleapis.com");
       if (needsUpload) {
@@ -1316,31 +1316,18 @@ export function PipelinePage() {
           setGenProgress(prev => ({ ...prev, [idx]: "Firebase 업로드 중..." }));
           const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/panels/panel_${idx}_${Date.now()}.png`;
 
-          // blob URL은 서버에서 접근 불가 → 클라이언트에서 직접 업로드 시도
-          if (result.imageUrl.startsWith("blob:")) {
-            try {
-              const blobResp = await fetch(result.imageUrl);
-              const blob = await blobResp.blob();
-              finalImageUrl = await uploadImage(storagePath, blob);
-            } catch {
-              console.warn(`[Panel ${idx}] blob 업로드 실패`);
-            }
-          } else {
-            // 외부 URL → 서버 API로 다운로드 + 업로드
-            const resp = await fetch("/api/image-upload", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ imageUrl: result.imageUrl, storagePath }),
-            });
-            if (resp.ok) {
-              const { url } = await resp.json();
-              finalImageUrl = url;
-            }
+          const { base64, contentType } = await imageUrlToBase64(result.imageUrl);
+          const resp = await fetch("/api/image-upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ imageBase64: base64, contentType, storagePath }),
+          });
+          if (resp.ok) {
+            const { url } = await resp.json();
+            finalImageUrl = url;
+            if (result.imageUrl.startsWith("blob:")) URL.revokeObjectURL(result.imageUrl);
           }
 
-          if (result.imageUrl.startsWith("blob:") && finalImageUrl !== result.imageUrl) {
-            URL.revokeObjectURL(result.imageUrl);
-          }
           console.log(`[Panel ${idx}] Firebase 업로드 완료: ${finalImageUrl}`);
           setGenProgress(prev => ({ ...prev, [idx]: `완료 (${result.duration}초)` }));
         } catch (e) {
@@ -1382,21 +1369,46 @@ export function PipelinePage() {
 
   // ── 패널 이미지 Firebase 재저장 ──
   const [savingPanelIdx, setSavingPanelIdx] = useState<number | null>(null);
+  /** 이미지 URL → base64 변환 (프록시 경유로 CORS 우회) */
+  const imageUrlToBase64 = useCallback(async (url: string): Promise<{ base64: string; contentType: string }> => {
+    // 1) 직접 fetch 시도
+    try {
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const blob = await resp.blob();
+        const arrayBuffer = await blob.arrayBuffer();
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+        return { base64, contentType: blob.type || "image/png" };
+      }
+    } catch { /* CORS — 프록시로 fallback */ }
+
+    // 2) 프록시 경유
+    const proxyResp = await fetch(`/api/image-proxy?url=${encodeURIComponent(url)}`);
+    if (!proxyResp.ok) throw new Error(`프록시 다운로드 실패 (${proxyResp.status})`);
+    const blob = await proxyResp.blob();
+    const arrayBuffer = await blob.arrayBuffer();
+    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+    return { base64, contentType: blob.type || "image/png" };
+  }, []);
+
   const savePanelImageToFirebase = useCallback(async (idx: number) => {
     const imageUrl = generatedImages[idx];
     if (!imageUrl) return;
 
     setSavingPanelIdx(idx);
-    setGenProgress(prev => ({ ...prev, [idx]: "서버 업로드 중..." }));
+    setGenProgress(prev => ({ ...prev, [idx]: "이미지 다운로드 중..." }));
 
     try {
       const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/panels/panel_${idx}_${Date.now()}.png`;
 
-      // 서버 API로 이미지 다운로드 + GCS 업로드 일괄 처리 (CORS/권한 문제 없음)
+      // 클라이언트에서 이미지 다운로드 (프록시 경유) → base64 → 서버 업로드
+      const { base64, contentType } = await imageUrlToBase64(imageUrl);
+      setGenProgress(prev => ({ ...prev, [idx]: "Firebase 업로드 중..." }));
+
       const resp = await fetch("/api/image-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageUrl, storagePath }),
+        body: JSON.stringify({ imageBase64: base64, contentType, storagePath }),
       });
 
       if (!resp.ok) {
@@ -1417,7 +1429,7 @@ export function PipelinePage() {
     } finally {
       setSavingPanelIdx(null);
     }
-  }, [generatedImages, projectId, episodeId]);
+  }, [generatedImages, projectId, episodeId, imageUrlToBase64]);
 
   // ── 전체 패널 이미지 일괄 Firebase 저장 ──
   const [isSavingAll, setIsSavingAll] = useState(false);
