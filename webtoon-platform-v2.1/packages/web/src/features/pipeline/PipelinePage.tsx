@@ -1234,6 +1234,8 @@ export function PipelinePage() {
     let prompt = panelPrompts[idx] || panel?.aiPrompt || panel?.description;
     if (!prompt) return null;
 
+    const excluded = panelExcludedRefs[idx];
+
     // ── 규칙1: 스타일 통일 — 선택된 아트 스타일 적용, 충돌 스타일 제거 ──
     const artStyle = ART_STYLES[artStyleKey];
     if (artStyle?.prefix && !prompt.startsWith(artStyle.prefix)) {
@@ -1275,7 +1277,6 @@ export function PipelinePage() {
     }
 
     // ── 레퍼런스 이미지 URL 수집 (씬 그룹 앵커 + 이전 패널 최우선) ──
-    const excluded = panelExcludedRefs[idx];
     const anchorRefs: string[] = [];     // 씬 그룹 앵커 패널 (스타일 드리프트 방지)
     const prevPanelRefs: string[] = [];   // 이전 패널 (최우선)
     const charOutfitRefs: string[] = [];  // 캐릭터/의상 ref
