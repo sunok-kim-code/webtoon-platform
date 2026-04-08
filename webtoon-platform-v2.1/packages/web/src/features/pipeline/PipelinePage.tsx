@@ -1629,6 +1629,7 @@ export function PipelinePage() {
 
   // ── 전체 패널 이미지 일괄 Firebase 저장 ──
   const [isSavingAll, setIsSavingAll] = useState(false);
+  const [isDownloadingAll, setIsDownloadingAll] = useState(false);
   const saveAllPanelImages = useCallback(async () => {
     const indices = Object.keys(generatedImages).map(Number).sort((a, b) => a - b);
     if (indices.length === 0) return;
@@ -1642,6 +1643,66 @@ export function PipelinePage() {
     setIsSavingAll(false);
     console.log(`[Pipeline] 전체 ${saved}개 패널 이미지 Firebase 저장 완료`);
   }, [generatedImages, savePanelImageToFirebase]);
+
+  // ── 전체 패널 이미지 ZIP 다운로드 ──
+  const downloadAllPanelImages = useCallback(async () => {
+    const indices = Object.keys(generatedImages).map(Number).sort((a, b) => a - b);
+    if (indices.length === 0) { alert("다운로드할 이미지가 없습니다."); return; }
+
+    setIsDownloadingAll(true);
+    try {
+      // 동적 import JSZip (CDN fallback)
+      let JSZip: any;
+      try {
+        JSZip = (await import("https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm" as any)).default;
+      } catch {
+        // fallback: 개별 다운로드
+        for (const idx of indices) {
+          const url = generatedImages[idx];
+          const resp = await fetch(url.startsWith("blob:") ? url : `/api/proxy-image?url=${encodeURIComponent(url)}`);
+          const blob = await resp.blob();
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = `panel_${String(idx + 1).padStart(3, "0")}.jpg`;
+          a.click();
+          URL.revokeObjectURL(a.href);
+          await new Promise(r => setTimeout(r, 300)); // 브라우저 throttle 방지
+        }
+        setIsDownloadingAll(false);
+        return;
+      }
+
+      const zip = new JSZip();
+      const epLabel = episodeId || "episode";
+
+      for (const idx of indices) {
+        const url = generatedImages[idx];
+        let blob: Blob;
+        try {
+          const resp = await fetch(url.startsWith("blob:") ? url : `/api/proxy-image?url=${encodeURIComponent(url)}`);
+          blob = await resp.blob();
+        } catch (e) {
+          console.warn(`[Download] 패널 ${idx + 1} fetch 실패`, e);
+          continue;
+        }
+        const ext = blob.type.includes("png") ? "png" : "jpg";
+        zip.file(`panel_${String(idx + 1).padStart(3, "0")}.${ext}`, blob);
+      }
+
+      const content = await zip.generateAsync({ type: "blob" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(content);
+      a.download = `panels_${epLabel}_${new Date().toISOString().slice(0, 10)}.zip`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      console.log(`[Pipeline] ${indices.length}개 패널 이미지 ZIP 다운로드 완료`);
+    } catch (err) {
+      console.error("[Download] ZIP 생성 실패", err);
+      alert("다운로드 중 오류가 발생했습니다.");
+    } finally {
+      setIsDownloadingAll(false);
+    }
+  }, [generatedImages, episodeId]);
 
   // ── 전체 패널 생성 (Vertex AI: BatchPredictionJob 50% 할인 / 기타: 순차) ──
   const generateAllPanels = useCallback(async () => {
@@ -2224,13 +2285,22 @@ export function PipelinePage() {
                   {isGeneratingAll ? "생성 중..." : "전체 패널 이미지 생성"}
                 </button>
                 {Object.keys(generatedImages).length > 0 && (
-                  <button
-                    onClick={saveAllPanelImages}
-                    style={{ ...S.generateAllBtn, background: "#059669" }}
-                    disabled={isSavingAll || isGeneratingAll || generatingIndex !== null}
-                  >
-                    {isSavingAll ? "저장 중..." : "💾 전체 Firebase 저장"}
-                  </button>
+                  <>
+                    <button
+                      onClick={saveAllPanelImages}
+                      style={{ ...S.generateAllBtn, background: "#059669" }}
+                      disabled={isSavingAll || isGeneratingAll || generatingIndex !== null}
+                    >
+                      {isSavingAll ? "저장 중..." : "💾 전체 Firebase 저장"}
+                    </button>
+                    <button
+                      onClick={downloadAllPanelImages}
+                      style={{ ...S.generateAllBtn, background: "#7c3aed" }}
+                      disabled={isDownloadingAll || isGeneratingAll}
+                    >
+                      {isDownloadingAll ? "다운로드 중..." : "📥 전체 다운로드"}
+                    </button>
+                  </>
                 )}
                 <button onClick={addPanel} style={S.addPanelBtn}>+ 패널 추가</button>
               </div>
@@ -2690,6 +2760,17 @@ export function PipelinePage() {
             <p style={S.stepDesc}>
               생성된 패널을 웹툰처럼 세로로 이어서 확인합니다. Figma로 내보내기도 이 단계에서 진행할 수 있습니다.
             </p>
+          </div>
+
+          {/* ── 이미지 다운로드 바 ── */}
+          <div style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
+            <button
+              onClick={downloadAllPanelImages}
+              style={{ ...S.generateAllBtn, background: "#7c3aed" }}
+              disabled={isDownloadingAll || Object.keys(generatedImages).length === 0}
+            >
+              {isDownloadingAll ? "다운로드 중..." : `📥 전체 패널 이미지 다운로드 (${Object.keys(generatedImages).length}장)`}
+            </button>
           </div>
 
           {/* Figma 연결 상태 + Export 버튼 */}
