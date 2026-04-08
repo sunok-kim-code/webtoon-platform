@@ -83,6 +83,17 @@ interface PipelineSaveData {
   savedAt: number;
 }
 
+/** ArrayBuffer → base64 변환 (대용량 이미지에서 스택 오버플로우 방지) */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const chunks: string[] = [];
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    chunks.push(String.fromCharCode(...bytes.subarray(i, i + chunkSize)));
+  }
+  return btoa(chunks.join(""));
+}
+
 function localKey(projectId?: string, episodeId?: string) {
   return `pipeline_${projectId || "default"}_${episodeId || "default"}`;
 }
@@ -455,7 +466,7 @@ export function PipelinePage() {
         blob = await resp.blob();
       }
       const arrayBuffer = await blob.arrayBuffer();
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+      const base64 = arrayBufferToBase64(arrayBuffer);
       const contentType = blob.type || "image/png";
       const ext = contentType.split("/")[1] || "png";
       const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/${subPath}_${Date.now()}.${ext}`;
@@ -1469,7 +1480,7 @@ export function PipelinePage() {
       if (resp.ok) {
         const blob = await resp.blob();
         const arrayBuffer = await blob.arrayBuffer();
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+        const base64 = arrayBufferToBase64(arrayBuffer);
         return { base64, contentType: blob.type || "image/png" };
       }
     } catch { /* CORS — 프록시로 fallback */ }
@@ -1479,7 +1490,7 @@ export function PipelinePage() {
     if (!proxyResp.ok) throw new Error(`프록시 다운로드 실패 (${proxyResp.status})`);
     const blob = await proxyResp.blob();
     const arrayBuffer = await blob.arrayBuffer();
-    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+    const base64 = arrayBufferToBase64(arrayBuffer);
     return { base64, contentType: blob.type || "image/png" };
   }, []);
 
@@ -1502,7 +1513,7 @@ export function PipelinePage() {
         if (!resp.ok) throw new Error("blob URL fetch 실패");
         const blob = await resp.blob();
         const arrayBuffer = await blob.arrayBuffer();
-        base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+        base64 = arrayBufferToBase64(arrayBuffer);
         contentType = blob.type || "image/png";
       } else {
         // http URL은 프록시 경유
