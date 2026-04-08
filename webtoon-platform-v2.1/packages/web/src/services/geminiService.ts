@@ -755,7 +755,7 @@ export async function analyzeSceneWithGemini(
           "Authorization": `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: {
             temperature: 0.7,
             topK: 40,
