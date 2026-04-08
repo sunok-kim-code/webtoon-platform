@@ -744,7 +744,10 @@ export async function analyzeSceneWithGemini(
       if (!projectId || !accessToken) {
         throw new Error("Vertex AI 설정이 필요합니다. 설정에서 VERTEX_PROJECT_ID와 VERTEX_ACCESS_TOKEN을 입력해주세요.");
       }
-      const url = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/${analysisModel}:generateContent`;
+      // gemini-3.1-pro-preview는 글로벌 엔드포인트만 지원
+      const apiHost = analysisModel.includes("3.1") ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
+      const apiLocation = analysisModel.includes("3.1") ? "global" : location;
+      const url = `https://${apiHost}/v1/projects/${projectId}/locations/${apiLocation}/publishers/google/models/${analysisModel}:generateContent`;
       const response = await fetch(url, {
         method: "POST",
         headers: {
