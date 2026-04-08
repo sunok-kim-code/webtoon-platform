@@ -1202,12 +1202,36 @@ export function PipelinePage() {
       }
     }
 
-    // ── 레퍼런스 이미지 URL 수집 (이전 패널 최우선) ──
+    // ── 레퍼런스 이미지 URL 수집 (씬 그룹 앵커 + 이전 패널 최우선) ──
     const excluded = panelExcludedRefs[idx];
+    const anchorRefs: string[] = [];     // 씬 그룹 앵커 패널 (스타일 드리프트 방지)
     const prevPanelRefs: string[] = [];   // 이전 패널 (최우선)
     const charOutfitRefs: string[] = [];  // 캐릭터/의상 ref
     const customRefUrls: string[] = [];   // 커스텀 ref
     const locationRefs: string[] = [];    // 장소 ref
+
+    // 0) 씬 그룹 앵커 패널 (같은 sceneGroupId의 첫 패널 이미지 — 스타일 드리프트 방지)
+    if (panel && idx > 0) {
+      const currentGroupId = (panel as any).sceneGroupId;
+      if (currentGroupId) {
+        // 같은 그룹의 첫 패널(sceneGroupIndex === 0) 찾기
+        const anchorIdx = editingPanels.findIndex(
+          (p, i) => i < idx && (p as any).sceneGroupId === currentGroupId && (p as any).sceneGroupIndex === 0
+        );
+        if (anchorIdx >= 0 && anchorIdx !== idx - 1) {
+          // 앵커가 직전 패널이 아닌 경우에만 추가 (직전 패널은 아래에서 따로 처리)
+          const anchorImg = generatedImages[anchorIdx];
+          if (anchorImg && anchorImg.startsWith("http")) anchorRefs.push(anchorImg);
+        }
+      }
+      // 에피소드 첫 패널도 앵커로 (전체 스타일 기준점)
+      if (idx > 1) {
+        const firstImg = generatedImages[0];
+        if (firstImg && firstImg.startsWith("http") && !anchorRefs.includes(firstImg)) {
+          anchorRefs.push(firstImg);
+        }
+      }
+    }
 
     // 1) 이전 패널 이미지 (가장 중요 — 스타일 연속성, 가중치 부여를 위해 직전 패널 ×3 중복)
     if (idx > 0 && !excluded?.has("prev")) {
@@ -1267,15 +1291,44 @@ export function PipelinePage() {
       }
     }
 
-    // 우선순위: 이전 패널 → 캐릭터/의상 → 커스텀 → 장소 (중복 제거, 최대 4개)
-    const allRefs = [...prevPanelRefs, ...charOutfitRefs, ...customRefUrls, ...locationRefs];
+    // 우선순위: 이전 패널 → 씬 그룹 앵커 → 캐릭터/의상 → 커스텀 → 장소 (중복 제거)
+    const allRefs = [...prevPanelRefs, ...anchorRefs, ...charOutfitRefs, ...customRefUrls, ...locationRefs];
     const uniqueRefs: string[] = [];
     for (const url of allRefs) {
       if (!uniqueRefs.includes(url)) uniqueRefs.push(url);
     }
     const finalRefUrls = uniqueRefs; // 제한 없이 모든 ref 전달
 
+    // ── 글로벌 스타일 지시문 (분석 결과에서 추출) ──
+    const globalStyle = (analysis as any)?.globalStyleDirective;
+    if (globalStyle) {
+      prompt = `[GLOBAL STYLE] ${globalStyle}\n\n${prompt}`;
+    }
+
+    // ── 서사 흐름 마커 ──
+    const totalPanels = editingPanels.length;
+    const narrativePos = (panel as any)?.narrativePosition || `Panel ${idx + 1} of ${totalPanels}`;
+    const continuityTag = (panel as any)?.continuityTag || "";
+    const delta = (panel as any)?.deltaFromPrevious || "";
+
+    prompt += `\n\n[NARRATIVE FLOW] ${narrativePos}. This is part of a continuous webtoon episode — each panel flows naturally into the next.`;
+    if (continuityTag) {
+      const tagDescriptions: Record<string, string> = {
+        establishing: "This is an ESTABLISHING shot introducing a new scene/location.",
+        continued_action: "CONTINUED ACTION from the previous panel — same scene, ongoing moment.",
+        reaction: "REACTION shot — this panel shows the response to what just happened.",
+        time_skip: "TIME SKIP — same location but time has passed.",
+        scene_transition: "SCENE TRANSITION — new location, maintain consistent art style.",
+      };
+      prompt += ` ${tagDescriptions[continuityTag] || continuityTag}`;
+    }
+
     if (idx > 0) {
+      // ── 델타 서술: 이전 패널 대비 변경점만 명시 ──
+      if (delta) {
+        prompt += `\n\n[DELTA FROM PREVIOUS PANEL — changes only] ${delta}`;
+      }
+
       // ── 이전 패널 컨텍스트: 스타일/분위기만 참조, 내용은 현재 패널만 그리도록 명확히 분리 ──
       const prevPanel = editingPanels[idx - 1];
       if (prevPanel) {
@@ -1287,8 +1340,14 @@ export function PipelinePage() {
 
       if (generatedImages[idx - 1]) {
         prompt += "\n\n[STYLE LOCK] The FIRST reference image is the immediately preceding panel — it has the HIGHEST priority. Match its art style EXACTLY: same linework, color palette, shading, character proportions, and skin tone. Copy the STYLE only, not the CONTENT. Maintain visual flow so the panels feel like consecutive frames from the same artist.";
+        if (anchorRefs.length > 0) {
+          prompt += " Additional reference images include the SCENE ANCHOR (first panel of this scene group) and the EPISODE ANCHOR (first panel of the episode) — use them to prevent style drift over many panels.";
+        }
       }
 
+      prompt += "\nDo NOT render any text, letters, words, sound effects, onomatopoeia, or speech bubbles in the image.";
+    } else {
+      // 첫 패널에도 텍스트 금지 추가
       prompt += "\nDo NOT render any text, letters, words, sound effects, onomatopoeia, or speech bubbles in the image.";
     }
 

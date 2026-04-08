@@ -390,8 +390,14 @@ ${charContext}${locContext}${outfitContext}
     {
       "panelNumber": 1,
       "description": "이 패널의 장면 설명 (한글). 원본 씬 텍스트의 시각적 디테일을 하나도 빠뜨리지 말 것 — 헤어스타일(묶음/풀림/올림 등), 손에 든 소품(국자, 책, 핸드폰 등), 구체적 자세(뒷모습, 앉은 자세 등), 피부·의상 노출 부위, 환경 소품(가스레인지, 찌개 냄비 등)을 모두 포함",
+      "sceneDescription": "이 패널에서 벌어지는 상황을 시각적으로 묘사 (한글, 1~2문장). 이미지 생성 시 이전 패널과의 연속성 유지에 사용됨.",
       "location": "이 패널의 구체적 장소 이름 (locations 배열의 name과 일치해야 함)",
       "locationCanonical": "이 패널 장소의 canonical 카테고리 (locations 배열의 locationCanonical과 일치해야 함)",
+      "sceneGroupId": "같은 장소·장면에 속하는 연속 패널들의 그룹 ID. 같은 공간에서 연속되는 패널은 동일한 ID를 사용. 장소가 바뀌거나 시간이 점프하면 새 ID로 전환. 형식: 'sg_1', 'sg_2', ... 순서대로.",
+      "sceneGroupIndex": "이 패널이 해당 sceneGroupId 내에서 몇 번째인지 (0부터 시작). 그룹의 첫 패널은 0.",
+      "narrativePosition": "Panel X of Y (전체 패널 수 기준). 예: 'Panel 3 of 48'. 모델에게 서사의 흐름 위치를 알려주기 위한 필드.",
+      "continuityTag": "서사 흐름 태그. 'establishing' (씬/장소 첫 등장), 'continued_action' (직전 패널과 같은 동작/대화 진행), 'reaction' (직전 패널에 대한 반응), 'time_skip' (시간 경과), 'scene_transition' (장소 전환) 중 하나.",
+      "deltaFromPrevious": "직전 패널 대비 변경된 요소만 기술 (영어). 첫 패널은 null. 예: 'Camera shifts from wide to close-up on 서린's face. 서린's expression changes from neutral to surprised. Background unchanged.' 변하지 않은 요소는 언급하지 말 것. 변경점만 명시.",
       "characters": ["등장하는 캐릭터 이름들"],
       "characterOutfits": { "캐릭터이름": "outfitNormalizedId (characters 배열의 값과 일치해야 함)" },
       "cameraAngle": "wide shot|medium shot|close-up|extreme close-up|over shoulder|bird's eye|low angle|dutch angle 중 하나",
@@ -406,7 +412,8 @@ ${charContext}${locContext}${outfitContext}
     }
   ],
   "sceneOverview": "씬 전체 요약 (한글, 1-2문장)",
-  "suggestedPromptStyle": "이 씬에 어울리는 아트 스타일 설명 (영어)"
+  "suggestedPromptStyle": "이 씬에 어울리는 아트 스타일 설명 (영어)",
+  "globalStyleDirective": "에피소드 전체에 적용할 통일된 아트 스타일 지시문 (영어). 첫 패널부터 마지막 패널까지 모든 이미지가 동일한 화풍을 유지하도록 하는 고정 프리픽스. 예: 'Consistent korean webtoon style: clean linework, soft cel-shading, pastel color palette with warm undertones, gentle ambient lighting, no harsh shadows.' 이 지시문은 모든 패널의 이미지 생성에 공통으로 붙는다."
 }
 
 [의상 라이브러리 규칙 — 반드시 준수]
@@ -426,6 +433,32 @@ ${charContext}${locContext}${outfitContext}
 2. 씬에서 직접 등장하는 공간만 포함합니다 (언급만 되고 등장하지 않는 곳은 제외)
 3. 각 장소의 promptSnippet은 해당 공간만의 고유한 시각 특징을 포함해야 합니다
 4. panels의 각 패널에서 해당 장면이 벌어지는 구체적 장소 이름을 "location" 필드로 지정합니다
+
+[씬 그룹핑 규칙 — 반드시 준수 (패널 간 연속성의 핵심)]
+1. 같은 장소에서 연속되는 패널들은 동일한 sceneGroupId를 부여하라.
+   - 예: 패널 1~5가 "거실"이면 모두 sceneGroupId: "sg_1"
+   - 패널 6~10이 "카페"이면 모두 sceneGroupId: "sg_2"
+   - 패널 11~15가 다시 "거실"이면 sceneGroupId: "sg_3" (새 그룹)
+2. sceneGroupIndex는 그룹 내 순서 (0, 1, 2...). 그룹의 첫 패널(index 0)이 앵커 패널 역할.
+3. 같은 장소라도 시간이 크게 점프하면 새 그룹으로 분리.
+
+[델타 서술 규칙 — 반드시 준수]
+1. deltaFromPrevious는 직전 패널과 비교하여 "변경된 요소만" 영어로 기술하라.
+   - 첫 패널(panelNumber: 1)은 null로 설정.
+   - 예: "Camera pulls back from close-up to medium shot. 세은 turns to face 서린. 서린's hand now holds a coffee cup. Lighting unchanged."
+2. 변하지 않은 요소는 절대 언급하지 말 것. 변경점만 명시하라.
+3. 카메라 앵글 변화, 캐릭터 동작/표정 변화, 소품 변화, 조명 변화를 각각 구분하여 서술.
+
+[서사 흐름 컨텍스트 규칙 — 반드시 준수]
+1. narrativePosition은 "Panel X of Y" 형식. Y는 전체 패널 수. 모든 패널에 반드시 포함.
+2. continuityTag는 패널의 서사적 역할을 나타내는 태그:
+   - "establishing": 새로운 장소/장면의 첫 등장 (wide shot 권장)
+   - "continued_action": 직전 패널과 같은 동작/대화가 이어짐
+   - "reaction": 직전 패널의 사건에 대한 반응
+   - "time_skip": 시간 경과 (같은 장소이지만 시간이 흐른 경우)
+   - "scene_transition": 장소가 바뀌는 전환
+3. sceneDescription은 이 패널의 시각적 상황을 1~2문장으로 요약. 이미지 생성 시 이전 패널 컨텍스트로 사용된다.
+4. globalStyleDirective는 에피소드 전체에 적용할 통일된 화풍 지시문. 씬의 분위기를 분석하여 적합한 스타일을 설정하라.
 
 [패널 분할 핵심 규칙 — 반드시 준수]
 1. 씬 텍스트에 "#숫자" 마커(예: #1, #2, #3)가 있으면 각 마커가 하나의 씬 블록이다. 한 블록 = 1개의 패널로 변환하라.
