@@ -1468,6 +1468,11 @@ export function PipelinePage() {
   const savePanelImageToFirebase = useCallback(async (idx: number) => {
     const imageUrl = generatedImages[idx];
     if (!imageUrl) return;
+    if (imageUrl.startsWith("blob:")) {
+      setGenProgress(prev => ({ ...prev, [idx]: "blob URL은 저장할 수 없습니다. 이미지를 다시 생성해주세요." }));
+      console.warn(`[Panel ${idx}] blob: URL — Firebase 저장 불가`);
+      return;
+    }
 
     setSavingPanelIdx(idx);
     setGenProgress(prev => ({ ...prev, [idx]: "이미지 다운로드 중..." }));
