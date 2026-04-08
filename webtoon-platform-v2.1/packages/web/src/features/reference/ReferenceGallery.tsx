@@ -156,6 +156,46 @@ export function ReferenceGallery() {
 
   const resolvedProjectId = projectId || currentProjectId;
 
+  /** 이미지 URL → Firebase Storage 업로드 → 영구 URL 반환 */
+  const uploadImageToFirebase = useCallback(async (imageUrl: string, subPath: string): Promise<string> => {
+    // 이미 Firebase URL이면 그대로 반환
+    if (imageUrl.startsWith("https://firebasestorage.googleapis.com")) return imageUrl;
+    try {
+      // 이미지 fetch → base64
+      let resp: Response;
+      try {
+        resp = await fetch(imageUrl);
+        if (!resp.ok) throw new Error(`direct fetch failed: ${resp.status}`);
+      } catch {
+        // CORS 실패 시 프록시 경유
+        resp = await fetch(`/api/image-proxy?url=${encodeURIComponent(imageUrl)}`);
+        if (!resp.ok) throw new Error(`proxy fetch failed: ${resp.status}`);
+      }
+      const blob = await resp.blob();
+      const arrayBuffer = await blob.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      const chunks: string[] = [];
+      for (let i = 0; i < bytes.length; i += 8192) {
+        chunks.push(String.fromCharCode(...bytes.subarray(i, i + 8192)));
+      }
+      const base64 = btoa(chunks.join(""));
+      const contentType = blob.type || "image/png";
+      const storagePath = `webtoon_projects/${resolvedProjectId || "default"}/${subPath}_${Date.now()}.png`;
+
+      const uploadResp = await fetch("/api/image-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: base64, contentType, storagePath }),
+      });
+      if (!uploadResp.ok) throw new Error(`upload failed: ${uploadResp.status}`);
+      const { url } = await uploadResp.json();
+      return url;
+    } catch (e) {
+      console.warn("[Gallery] Firebase 업로드 실패, 원본 URL 유지:", e);
+      return imageUrl;
+    }
+  }, [resolvedProjectId]);
+
   useEffect(() => {
     if (projectId) {
       reloadReferences(projectId);
@@ -319,11 +359,13 @@ export function ReferenceGallery() {
         onProgress: (state: KieTaskState, elapsed: number) =>
           setBulkGenProgress(p => ({ ...p, [key]: `${stateLabels[state] || state} (${elapsed}초)` })),
       });
+      setBulkGenProgress(p => ({ ...p, [key]: `Firebase 업로드 중...` }));
+      const firebaseUrl = await uploadImageToFirebase(result.imageUrl, `refs/outfit_${outfit.id}`);
       setBulkGenProgress(p => ({ ...p, [key]: `✓ 완료 (${result.duration}초)` }));
       const now = Date.now();
       const newRef: ReferenceImage = {
         id: `ref_${now}_outfit`,
-        storageUrl: result.imageUrl,
+        storageUrl: firebaseUrl,
         tags: { emotion: "neutral", outfit: outfit.label, angle: "front" } as any,
         sourceEpisode: "", sourcePanel: 0, usageCount: 0, quality: 3, createdAt: now,
       };
@@ -430,11 +472,13 @@ export function ReferenceGallery() {
             setRefGenProgress(prev => ({ ...prev, [key]: `${stateLabels[state] || state} (${elapsed}초)` }));
           },
         });
+        setRefGenProgress(prev => ({ ...prev, [key]: `Firebase 업로드 중...` }));
+        const firebaseUrl = await uploadImageToFirebase(result.imageUrl, `refs/loc_${loc.id}`);
         setRefGenProgress(prev => ({ ...prev, [key]: `완료 (${result.duration}초)` }));
         const now = Date.now();
         const newRef: ReferenceImage = {
           id: `ref_${now}_refgen`,
-          storageUrl: result.imageUrl,
+          storageUrl: firebaseUrl,
           tags: { timeOfDay: "afternoon", weather: "clear", mood: "bright" },
           sourceEpisode: "",
           sourcePanel: 0,
@@ -473,6 +517,8 @@ export function ReferenceGallery() {
           setRefGenProgress(prev => ({ ...prev, [key]: `${stateLabels[state] || state} (${elapsed}초)` }));
         },
       });
+      setRefGenProgress(prev => ({ ...prev, [key]: `Firebase 업로드 중...` }));
+      const firebaseUrl = await uploadImageToFirebase(result.imageUrl, `refs/char_${char.id}`);
       setRefGenProgress(prev => ({ ...prev, [key]: `완료 (${result.duration}초)` }));
 
       const now = Date.now();
@@ -480,7 +526,7 @@ export function ReferenceGallery() {
       const activeOutfitForTag = charOutfitsForTag.find(o => o.id === char.currentOutfitId);
       const newRef: ReferenceImage = {
         id: `ref_${now}_refgen`,
-        storageUrl: result.imageUrl,
+        storageUrl: firebaseUrl,
         tags: { emotion: "neutral", outfit: activeOutfitForTag?.label || "default", angle: "front" },
         sourceEpisode: "",
         sourcePanel: 0,
@@ -521,12 +567,14 @@ export function ReferenceGallery() {
           setRefGenProgress(prev => ({ ...prev, [key]: `${stateLabels[state] || state} (${elapsed}초)` }));
         },
       });
+      setRefGenProgress(prev => ({ ...prev, [key]: `Firebase 업로드 중...` }));
+      const firebaseUrl = await uploadImageToFirebase(result.imageUrl, `refs/loc_${loc.id}`);
       setRefGenProgress(prev => ({ ...prev, [key]: `완료 (${result.duration}초)` }));
 
       const now = Date.now();
       const newRef: ReferenceImage = {
         id: `ref_${now}_refgen`,
-        storageUrl: result.imageUrl,
+        storageUrl: firebaseUrl,
         tags: { timeOfDay: "afternoon", weather: "clear", mood: "bright" },
         sourceEpisode: "",
         sourcePanel: 0,
@@ -565,12 +613,14 @@ export function ReferenceGallery() {
           onProgress: (state: KieTaskState, elapsed: number) =>
             setBulkGenProgress(p => ({ ...p, [key]: `${stateLabels[state] || state} (${elapsed}초)` })),
         });
+        setBulkGenProgress(p => ({ ...p, [key]: `Firebase 업로드 중...` }));
+        const firebaseUrl = await uploadImageToFirebase(result.imageUrl, `refs/char_${char.id}`);
         setBulkGenProgress(p => ({ ...p, [key]: `✓ 완료 (${result.duration}초)` }));
-        setBulkGenImages(p => ({ ...p, [key]: result.imageUrl }));
+        setBulkGenImages(p => ({ ...p, [key]: firebaseUrl }));
         const now = Date.now();
         const newRef: ReferenceImage = {
           id: `ref_${now}_bulk`,
-          storageUrl: result.imageUrl,
+          storageUrl: firebaseUrl,
           tags: { emotion: "neutral", outfit: "default", angle: "front" },
           sourceEpisode: "", sourcePanel: 0, usageCount: 0, quality: 3, createdAt: now,
         };
@@ -604,12 +654,14 @@ export function ReferenceGallery() {
           onProgress: (state: KieTaskState, elapsed: number) =>
             setBulkGenProgress(p => ({ ...p, [key]: `${stateLabels[state] || state} (${elapsed}초)` })),
         });
+        setBulkGenProgress(p => ({ ...p, [key]: `Firebase 업로드 중...` }));
+        const firebaseUrl = await uploadImageToFirebase(result.imageUrl, `refs/loc_${loc.id}`);
         setBulkGenProgress(p => ({ ...p, [key]: `✓ 완료 (${result.duration}초)` }));
-        setBulkGenImages(p => ({ ...p, [key]: result.imageUrl }));
+        setBulkGenImages(p => ({ ...p, [key]: firebaseUrl }));
         const now = Date.now();
         const newRef: ReferenceImage = {
           id: `ref_${now}_bulk`,
-          storageUrl: result.imageUrl,
+          storageUrl: firebaseUrl,
           tags: { timeOfDay: "afternoon", weather: "clear", mood: "bright" },
           sourceEpisode: "", sourcePanel: 0, usageCount: 0, quality: 3, createdAt: now,
         };
@@ -668,12 +720,14 @@ export function ReferenceGallery() {
           onProgress: (state: KieTaskState, elapsed: number) =>
             setBulkGenProgress(p => ({ ...p, [key]: `${stateLabels[state] || state} (${elapsed}초)` })),
         });
+        setBulkGenProgress(p => ({ ...p, [key]: `Firebase 업로드 중...` }));
+        const firebaseUrl = await uploadImageToFirebase(result.imageUrl, `refs/outfit_${outfit.id}`);
         setBulkGenProgress(p => ({ ...p, [key]: `✓ 완료 (${result.duration}초)` }));
-        setBulkGenImages(p => ({ ...p, [key]: result.imageUrl }));
+        setBulkGenImages(p => ({ ...p, [key]: firebaseUrl }));
         const now = Date.now();
         const newRef: ReferenceImage = {
           id: `ref_${now}_bulk`,
-          storageUrl: result.imageUrl,
+          storageUrl: firebaseUrl,
           tags: { emotion: "neutral", outfit: outfit.label, angle: "front" } as any,
           sourceEpisode: "", sourcePanel: 0, usageCount: 0, quality: 3, createdAt: now,
         };
