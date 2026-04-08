@@ -97,23 +97,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const accessToken = tokenData.access_token;
     console.log("[image-upload] Token acquired");
 
-    // 3) GCS 업로드
+    // 3) GCS 업로드 (multipart — 메타데이터 + 파일 동시 전송)
     const bucket = process.env.GCS_BUCKET || DEFAULT_BUCKET;
     const encodedPath = encodeURIComponent(storagePath);
-    const gcsUrl = `https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=media&name=${encodedPath}`;
-
-    // 다운로드 토큰 생성 (Firebase Storage 호환)
     const downloadToken = crypto.randomUUID();
+
+    // multipart 바운더리 생성
+    const boundary = `----Upload${crypto.randomUUID().replace(/-/g, "")}`;
+
+    // metadata JSON
+    const metadata = JSON.stringify({
+      name: storagePath,
+      contentType,
+      metadata: {
+        firebaseStorageDownloadTokens: downloadToken,
+      },
+    });
+
+    // multipart body 조립
+    const bodyParts = [
+      `--${boundary}\r\n`,
+      `Content-Type: application/json; charset=UTF-8\r\n\r\n`,
+      metadata,
+      `\r\n--${boundary}\r\n`,
+      `Content-Type: ${contentType}\r\n\r\n`,
+    ];
+    const prefix = Buffer.from(bodyParts.join(""));
+    const suffix = Buffer.from(`\r\n--${boundary}--`);
+    const multipartBody = Buffer.concat([prefix, imgBuffer, suffix]);
+
+    const gcsUrl = `https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=multipart`;
 
     const uploadRes = await fetch(gcsUrl, {
       method: "POST",
       headers: {
-        "Content-Type": contentType,
+        "Content-Type": `multipart/related; boundary=${boundary}`,
         "Authorization": `Bearer ${accessToken}`,
-        // Firebase Storage 다운로드 토큰을 메타데이터로 설정
-        "x-goog-meta-firebaseStorageDownloadTokens": downloadToken,
       },
-      body: imgBuffer,
+      body: multipartBody,
     });
 
     if (!uploadRes.ok) {
