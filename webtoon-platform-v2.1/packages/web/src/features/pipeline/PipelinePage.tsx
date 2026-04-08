@@ -1382,10 +1382,14 @@ export function PipelinePage() {
       });
       setGenProgress(prev => ({ ...prev, [idx]: `완료 (${result.duration}초)` }));
 
-      // 즉시 Firebase 업로드 (프록시 → base64 → 서버 API)
+      // 먼저 이미지를 화면에 표시 (blob이든 http이든 즉시 보이게)
+      setGeneratedImages(prev => ({ ...prev, [idx]: result.imageUrl }));
+
+      // 즉시 Firebase 업로드 시도 (http URL만 — blob URL은 수동 저장 버튼으로 처리)
       let finalImageUrl = result.imageUrl;
-      const needsUpload = !result.imageUrl.startsWith("https://firebasestorage.googleapis.com");
-      if (needsUpload) {
+      const isFirebaseUrl = result.imageUrl.startsWith("https://firebasestorage.googleapis.com");
+      const isBlobUrl = result.imageUrl.startsWith("blob:");
+      if (!isFirebaseUrl && !isBlobUrl) {
         try {
           setGenProgress(prev => ({ ...prev, [idx]: "Firebase 업로드 중..." }));
           const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/panels/panel_${idx}_${Date.now()}.png`;
@@ -1399,16 +1403,18 @@ export function PipelinePage() {
           if (resp.ok) {
             const { url } = await resp.json();
             finalImageUrl = url;
-            if (result.imageUrl.startsWith("blob:")) URL.revokeObjectURL(result.imageUrl);
+            setGeneratedImages(prev => ({ ...prev, [idx]: finalImageUrl }));
           }
 
           console.log(`[Panel ${idx}] Firebase 업로드 완료: ${finalImageUrl}`);
           setGenProgress(prev => ({ ...prev, [idx]: `완료 (${result.duration}초)` }));
         } catch (e) {
-          console.warn(`[Panel ${idx}] Firebase 즉시 업로드 실패:`, e);
+          console.warn(`[Panel ${idx}] Firebase 즉시 업로드 실패 — 원본 URL 유지:`, e);
+          setGenProgress(prev => ({ ...prev, [idx]: `완료 (${result.duration}초) — 업로드 실패, 수동 저장 필요` }));
         }
+      } else if (isBlobUrl) {
+        console.log(`[Panel ${idx}] blob URL — 화면 표시만 (수동 저장 버튼으로 Firebase 업로드 가능)`);
       }
-      setGeneratedImages(prev => ({ ...prev, [idx]: finalImageUrl }));
 
       // ── Context Chain 업데이트 ──
       if (panel && analysis) {
@@ -1468,11 +1474,6 @@ export function PipelinePage() {
   const savePanelImageToFirebase = useCallback(async (idx: number) => {
     const imageUrl = generatedImages[idx];
     if (!imageUrl) return;
-    if (imageUrl.startsWith("blob:")) {
-      setGenProgress(prev => ({ ...prev, [idx]: "blob URL은 저장할 수 없습니다. 이미지를 다시 생성해주세요." }));
-      console.warn(`[Panel ${idx}] blob: URL — Firebase 저장 불가`);
-      return;
-    }
 
     setSavingPanelIdx(idx);
     setGenProgress(prev => ({ ...prev, [idx]: "이미지 다운로드 중..." }));
@@ -1480,8 +1481,24 @@ export function PipelinePage() {
     try {
       const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/panels/panel_${idx}_${Date.now()}.png`;
 
-      // 클라이언트에서 이미지 다운로드 (프록시 경유) → base64 → 서버 업로드
-      const { base64, contentType } = await imageUrlToBase64(imageUrl);
+      let base64: string;
+      let contentType: string;
+
+      if (imageUrl.startsWith("blob:")) {
+        // blob URL은 브라우저에서 직접 fetch 가능 (프록시 불필요)
+        const resp = await fetch(imageUrl);
+        if (!resp.ok) throw new Error("blob URL fetch 실패");
+        const blob = await resp.blob();
+        const arrayBuffer = await blob.arrayBuffer();
+        base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+        contentType = blob.type || "image/png";
+      } else {
+        // http URL은 프록시 경유
+        const result = await imageUrlToBase64(imageUrl);
+        base64 = result.base64;
+        contentType = result.contentType;
+      }
+
       setGenProgress(prev => ({ ...prev, [idx]: "Firebase 업로드 중..." }));
 
       const resp = await fetch("/api/image-upload", {
@@ -1497,6 +1514,7 @@ export function PipelinePage() {
 
       const { url: firebaseUrl } = await resp.json();
 
+      // 업로드 성공 후에만 blob 해제
       if (imageUrl.startsWith("blob:")) URL.revokeObjectURL(imageUrl);
 
       setGeneratedImages(prev => ({ ...prev, [idx]: firebaseUrl }));
