@@ -102,11 +102,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const encodedPath = encodeURIComponent(storagePath);
     const gcsUrl = `https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=media&name=${encodedPath}`;
 
+    // 다운로드 토큰 생성 (Firebase Storage 호환)
+    const downloadToken = crypto.randomUUID();
+
     const uploadRes = await fetch(gcsUrl, {
       method: "POST",
       headers: {
         "Content-Type": contentType,
         "Authorization": `Bearer ${accessToken}`,
+        // Firebase Storage 다운로드 토큰을 메타데이터로 설정
+        "x-goog-meta-firebaseStorageDownloadTokens": downloadToken,
       },
       body: imgBuffer,
     });
@@ -119,7 +124,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     console.log("[image-upload] GCS upload success:", storagePath);
 
-    const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodedPath}?alt=media`;
+    // 다운로드 토큰 포함 URL (인증 없이 접근 가능)
+    const downloadUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodedPath}?alt=media&token=${downloadToken}`;
     return res.status(200).json({ url: downloadUrl });
 
   } catch (err: any) {
