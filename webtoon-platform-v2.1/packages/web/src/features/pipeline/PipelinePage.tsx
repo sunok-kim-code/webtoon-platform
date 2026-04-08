@@ -94,6 +94,48 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(chunks.join(""));
 }
 
+/**
+ * 이미지를 Canvas로 리사이즈/JPEG 압축하여 base64 반환
+ * Vercel 4.5MB body 제한 대응 — 최대 2048px, JPEG quality 0.85
+ */
+function compressImageToBase64(blob: Blob, maxSize = 2048, quality = 0.85): Promise<{ base64: string; contentType: string }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxSize || height > maxSize) {
+        const ratio = Math.min(maxSize / width, maxSize / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { reject(new Error("Canvas context failed")); return; }
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (outBlob) => {
+          if (!outBlob) { reject(new Error("Canvas toBlob failed")); return; }
+          const reader = new FileReader();
+          reader.onload = () => {
+            const dataUrl = reader.result as string;
+            const base64 = dataUrl.split(",")[1];
+            resolve({ base64, contentType: "image/jpeg" });
+          };
+          reader.onerror = () => reject(new Error("FileReader failed"));
+          reader.readAsDataURL(outBlob);
+        },
+        "image/jpeg",
+        quality,
+      );
+    };
+    img.onerror = () => reject(new Error("Image load failed"));
+    img.crossOrigin = "anonymous";
+    img.src = URL.createObjectURL(blob);
+  });
+}
+
 /** 유효한 이미지 URL인지 체크 (http, https, blob: 모두 허용) */
 function isValidImageUrl(url: string | undefined | null): url is string {
   if (!url) return false;
@@ -471,11 +513,9 @@ export function PipelinePage() {
         if (!resp.ok) throw new Error(`fetch failed: ${resp.status}`);
         blob = await resp.blob();
       }
-      const arrayBuffer = await blob.arrayBuffer();
-      const base64 = arrayBufferToBase64(arrayBuffer);
-      const contentType = blob.type || "image/png";
-      const ext = contentType.split("/")[1] || "png";
-      const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/${subPath}_${Date.now()}.${ext}`;
+      // Canvas 리사이즈 + JPEG 압축 (Vercel 4.5MB body 제한 대응)
+      const { base64, contentType } = await compressImageToBase64(blob, 2048, 0.85);
+      const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/${subPath}_${Date.now()}.jpg`;
 
       const uploadResp = await fetch("/api/image-upload", {
         method: "POST",
@@ -1438,9 +1478,22 @@ export function PipelinePage() {
       if (!isFirebaseUrl && !isBlobUrl) {
         try {
           setGenProgress(prev => ({ ...prev, [idx]: "Firebase 업로드 중..." }));
-          const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/panels/panel_${idx}_${Date.now()}.png`;
+          const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/panels/panel_${idx}_${Date.now()}.jpg`;
 
-          const { base64, contentType } = await imageUrlToBase64(result.imageUrl);
+          // 프록시 경유 다운로드 → Canvas 압축 (Vercel 4.5MB body 제한 대응)
+          const proxyResp = await fetch(`/api/image-proxy?url=${encodeURIComponent(result.imageUrl)}`);
+          const imgBlob = proxyResp.ok ? await proxyResp.blob() : null;
+          let base64: string, contentType: string;
+          if (imgBlob && imgBlob.size > 0) {
+            const compressed = await compressImageToBase64(imgBlob, 2048, 0.85);
+            base64 = compressed.base64;
+            contentType = compressed.contentType;
+          } else {
+            // fallback: 기존 방식
+            const raw = await imageUrlToBase64(result.imageUrl);
+            base64 = raw.base64;
+            contentType = raw.contentType;
+          }
           const resp = await fetch("/api/image-upload", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1525,25 +1578,25 @@ export function PipelinePage() {
     setGenProgress(prev => ({ ...prev, [idx]: "이미지 다운로드 중..." }));
 
     try {
-      const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/panels/panel_${idx}_${Date.now()}.png`;
+      const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/panels/panel_${idx}_${Date.now()}.jpg`;
 
-      let base64: string;
-      let contentType: string;
+      let blob: Blob;
 
       if (imageUrl.startsWith("blob:")) {
-        // blob URL은 브라우저에서 직접 fetch 가능 (프록시 불필요)
         const resp = await fetch(imageUrl);
         if (!resp.ok) throw new Error("blob URL fetch 실패");
-        const blob = await resp.blob();
-        const arrayBuffer = await blob.arrayBuffer();
-        base64 = arrayBufferToBase64(arrayBuffer);
-        contentType = blob.type || "image/png";
+        blob = await resp.blob();
       } else {
         // http URL은 프록시 경유
-        const result = await imageUrlToBase64(imageUrl);
-        base64 = result.base64;
-        contentType = result.contentType;
+        const proxyResp = await fetch(`/api/image-proxy?url=${encodeURIComponent(imageUrl)}`);
+        if (!proxyResp.ok) throw new Error(`프록시 다운로드 실패 (${proxyResp.status})`);
+        blob = await proxyResp.blob();
       }
+
+      setGenProgress(prev => ({ ...prev, [idx]: "이미지 압축 중..." }));
+
+      // Canvas 리사이즈 + JPEG 압축 (Vercel 4.5MB body 제한 대응)
+      const { base64, contentType } = await compressImageToBase64(blob, 2048, 0.85);
 
       setGenProgress(prev => ({ ...prev, [idx]: "Firebase 업로드 중..." }));
 
