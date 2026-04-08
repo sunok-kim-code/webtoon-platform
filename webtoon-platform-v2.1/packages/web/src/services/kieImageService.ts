@@ -871,41 +871,9 @@ export async function getTaskDetail(taskId: string): Promise<KieTaskDetail> {
  * KIE API의 NSFW 필터에 걸릴 수 있는 표현을 순화합니다.
  * 신체 묘사, 의상 관련 민감 표현을 웹툰 캐릭터 디자인용으로 변환합니다.
  */
+/** NSFW 순화 비활성화 — 이미지 모델이 자체 NSFW 필터를 가지고 있으므로 원본 프롬프트를 그대로 전달 */
 function sanitizePromptForNSFW(prompt: string): string {
-  const replacements: [RegExp, string][] = [
-    // 신체 관련
-    [/\bprominent veins?\b/gi, "defined muscles"],
-    [/\bhighly muscular build\b/gi, "athletic strong build"],
-    [/\bmuscular build\b/gi, "athletic build"],
-    [/\bfull lip shape\b/gi, "well-defined lips"],
-    [/\bfull lips?\b/gi, "well-defined lips"],
-    [/\bsensual\b/gi, "elegant"],
-    [/\bsexy\b/gi, "stylish"],
-    [/\bseductive\b/gi, "charming"],
-    [/\bvoluptuous\b/gi, "curvy silhouette"],
-    [/\bbare skin\b/gi, "visible skin"],
-    [/\bexposed skin\b/gi, "visible skin"],
-    [/\bnaked\b/gi, "unclothed"],
-    [/\bnude\b/gi, "unclothed"],
-    [/\bcleavage\b/gi, "neckline"],
-    [/\bskin-tight\b/gi, "form-fitting"],
-    [/\bbody contours?\b/gi, "body silhouette"],
-    [/\bskin tones? with detailed highlights\b/gi, "natural skin coloring"],
-    [/\bintimate\b/gi, "close-up"],
-    [/\bbikini\b/gi, "swimsuit"],
-    [/\blingerie\b/gi, "sleepwear"],
-    [/\bunderwear\b/gi, "innerwear"],
-    // 폭력 관련
-    [/\bblood-soaked\b/gi, "battle-worn"],
-    [/\bgory\b/gi, "intense"],
-    [/\bbrutal\b/gi, "fierce"],
-  ];
-
-  let sanitized = prompt;
-  for (const [pattern, replacement] of replacements) {
-    sanitized = sanitized.replace(pattern, replacement);
-  }
-  return sanitized;
+  return prompt;
 }
 
 // ─── 이미지 생성 (통합: create + poll) ─────────────────────

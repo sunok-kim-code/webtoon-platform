@@ -1272,8 +1272,20 @@ export function PipelinePage() {
     }
     const finalRefUrls = uniqueRefs; // 제한 없이 모든 ref 전달
 
-    if (idx > 0 && generatedImages[idx - 1]) {
-      prompt += "\n\n[STYLE LOCK — CRITICAL] You MUST maintain IDENTICAL art style, character appearance, and visual consistency with the previous panels provided as reference images. Specifically preserve: same linework weight and thickness, same color palette and saturation, same shading/lighting technique, same character face shape/proportions/hair style, same skin tone rendering, same background detail level. Every panel must look like the SAME ARTIST drew it in ONE SESSION. The reference images are from immediately preceding panels in the same comic — match them exactly.";
+    if (idx > 0) {
+      // ── 이전 패널 씬 묘사를 포함하여 장면 전환의 연속성 확보 ──
+      const prevPanel = editingPanels[idx - 1];
+      if (prevPanel) {
+        const prevDesc = prevPanel.sceneDescription || prevPanel.description || "";
+        if (prevDesc) {
+          prompt += `\n\n[PREVIOUS PANEL CONTEXT] The immediately preceding panel shows: ${prevDesc}. This panel continues directly from that scene — maintain spatial continuity, character positions, lighting direction, and environment details.`;
+        }
+      }
+
+      if (generatedImages[idx - 1]) {
+        prompt += "\n\n[STYLE LOCK — CRITICAL] You MUST maintain IDENTICAL art style, character appearance, and visual consistency with the previous panels provided as reference images. Specifically preserve: same linework weight and thickness, same color palette and saturation, same shading/lighting technique, same character face shape/proportions/hair style, same skin tone rendering, same background detail level. Every panel must look like the SAME ARTIST drew it in ONE SESSION. The reference images are from immediately preceding panels in the same comic — match them exactly.";
+      }
+
       prompt += "\nDo NOT render any text, letters, words, sound effects, onomatopoeia, or speech bubbles in the image.";
     }
 
