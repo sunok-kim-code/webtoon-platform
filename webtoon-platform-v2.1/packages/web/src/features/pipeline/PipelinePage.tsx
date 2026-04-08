@@ -1595,53 +1595,82 @@ export function PipelinePage() {
 
     setIsDownloadingAll(true);
     try {
-      // 동적 import JSZip (CDN fallback)
-      let JSZip: any;
-      try {
-        JSZip = (await import("https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm" as any)).default;
-      } catch {
-        // fallback: 개별 다운로드
-        for (const idx of indices) {
-          const url = generatedImages[idx];
-          const resp = await fetch(url.startsWith("blob:") ? url : `/api/proxy-image?url=${encodeURIComponent(url)}`);
+      // 이미지 fetch 헬퍼 (Firebase Storage URL은 직접 fetch, blob URL도 직접 fetch)
+      const fetchImageBlob = async (url: string): Promise<Blob | null> => {
+        try {
+          const resp = await fetch(url, { mode: "cors" });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
           const blob = await resp.blob();
+          // 유효한 이미지인지 확인 (content-type 체크)
+          if (!blob.type.startsWith("image/")) {
+            console.warn(`[Download] 이미지가 아닌 응답:`, blob.type, url);
+            return null;
+          }
+          return blob;
+        } catch (e) {
+          console.warn(`[Download] fetch 실패:`, e, url);
+          return null;
+        }
+      };
+
+      // JSZip 동적 로드 시도
+      let JSZip: any = null;
+      try {
+        const mod = await import(/* @vite-ignore */ "https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm");
+        JSZip = mod.default || mod;
+      } catch {
+        console.log("[Download] JSZip CDN 로드 실패 → 개별 다운로드 모드");
+      }
+
+      if (JSZip) {
+        // ── ZIP 다운로드 ──
+        const zip = new JSZip();
+        const epLabel = episodeId || "episode";
+        let added = 0;
+
+        for (const idx of indices) {
+          const blob = await fetchImageBlob(generatedImages[idx]);
+          if (!blob) continue;
+          const ext = blob.type.includes("png") ? "png" : "jpg";
+          zip.file(`panel_${String(idx + 1).padStart(3, "0")}.${ext}`, blob);
+          added++;
+        }
+
+        if (added === 0) {
+          alert("다운로드할 수 있는 이미지가 없습니다.");
+        } else {
+          const content = await zip.generateAsync({ type: "blob" });
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(content);
+          a.download = `panels_${epLabel}_${new Date().toISOString().slice(0, 10)}.zip`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(a.href);
+          console.log(`[Pipeline] ${added}개 패널 이미지 ZIP 다운로드 완료`);
+        }
+      } else {
+        // ── fallback: 개별 다운로드 ──
+        let downloaded = 0;
+        for (const idx of indices) {
+          const blob = await fetchImageBlob(generatedImages[idx]);
+          if (!blob) continue;
+          const ext = blob.type.includes("png") ? "png" : "jpg";
           const a = document.createElement("a");
           a.href = URL.createObjectURL(blob);
-          a.download = `panel_${String(idx + 1).padStart(3, "0")}.jpg`;
+          a.download = `panel_${String(idx + 1).padStart(3, "0")}.${ext}`;
+          document.body.appendChild(a);
           a.click();
+          document.body.removeChild(a);
           URL.revokeObjectURL(a.href);
-          await new Promise(r => setTimeout(r, 300)); // 브라우저 throttle 방지
+          downloaded++;
+          await new Promise(r => setTimeout(r, 400));
         }
-        setIsDownloadingAll(false);
-        return;
+        if (downloaded === 0) alert("다운로드할 수 있는 이미지가 없습니다.");
+        else console.log(`[Pipeline] ${downloaded}개 패널 이미지 개별 다운로드 완료`);
       }
-
-      const zip = new JSZip();
-      const epLabel = episodeId || "episode";
-
-      for (const idx of indices) {
-        const url = generatedImages[idx];
-        let blob: Blob;
-        try {
-          const resp = await fetch(url.startsWith("blob:") ? url : `/api/proxy-image?url=${encodeURIComponent(url)}`);
-          blob = await resp.blob();
-        } catch (e) {
-          console.warn(`[Download] 패널 ${idx + 1} fetch 실패`, e);
-          continue;
-        }
-        const ext = blob.type.includes("png") ? "png" : "jpg";
-        zip.file(`panel_${String(idx + 1).padStart(3, "0")}.${ext}`, blob);
-      }
-
-      const content = await zip.generateAsync({ type: "blob" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(content);
-      a.download = `panels_${epLabel}_${new Date().toISOString().slice(0, 10)}.zip`;
-      a.click();
-      URL.revokeObjectURL(a.href);
-      console.log(`[Pipeline] ${indices.length}개 패널 이미지 ZIP 다운로드 완료`);
     } catch (err) {
-      console.error("[Download] ZIP 생성 실패", err);
+      console.error("[Download] 다운로드 실패", err);
       alert("다운로드 중 오류가 발생했습니다.");
     } finally {
       setIsDownloadingAll(false);
