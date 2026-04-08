@@ -2041,6 +2041,37 @@ export function PipelinePage() {
             {step.label}
           </button>
         ))}
+        {/* ── 이미지 모델 + 아트 스타일 (상단 네비) ── */}
+        <div style={S.navModelBar}>
+          <label style={S.modelLabel}>모델</label>
+          <select
+            value={selectedModel}
+            onChange={e => handleModelChange(e.target.value)}
+            style={S.modelSelectCompact}
+          >
+            {KIE_IMAGE_MODELS.filter(m => m.mode === "text2img").map(m => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+            <optgroup label="── img2img (레퍼런스 기반) ──">
+              {KIE_IMAGE_MODELS.filter(m => m.mode === "img2img").map(m => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </optgroup>
+          </select>
+          <label style={S.modelLabel}>스타일</label>
+          <select
+            value={artStyleKey}
+            onChange={e => setArtStyleKey(e.target.value)}
+            style={S.modelSelectCompact}
+          >
+            {ART_STYLE_KEYS.map(key => (
+              <option key={key} value={key}>{ART_STYLES[key].name}</option>
+            ))}
+          </select>
+          <span style={S.kieStatusDot(kieReady)}>
+            {kieReady ? "✓ Kie.ai" : "⚠️ API 키 필요"}
+          </span>
+        </div>
       </div>
 
       {/* ═══ STEP 1: 씬 설명 입력 ═══ */}
@@ -2149,38 +2180,6 @@ export function PipelinePage() {
                 ? "Gemini AI가 분석한 결과입니다. 레퍼런스 이미지를 생성하고, 패널별 이미지를 바로 확인할 수 있습니다."
                 : "로컬 분석 결과입니다. Gemini API를 연결하면 더 정확한 분석이 가능합니다."}
             </p>
-          </div>
-
-          {/* ── 이미지 모델 + 아트 스타일 (한 줄) ── */}
-          <div style={S.modelSelectorBar}>
-            <label style={S.modelLabel}>모델</label>
-            <select
-              value={selectedModel}
-              onChange={e => handleModelChange(e.target.value)}
-              style={S.modelSelectCompact}
-            >
-              {KIE_IMAGE_MODELS.filter(m => m.mode === "text2img").map(m => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-              <optgroup label="── img2img (레퍼런스 기반) ──">
-                {KIE_IMAGE_MODELS.filter(m => m.mode === "img2img").map(m => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </optgroup>
-            </select>
-            <label style={S.modelLabel}>스타일</label>
-            <select
-              value={artStyleKey}
-              onChange={e => setArtStyleKey(e.target.value)}
-              style={S.modelSelectCompact}
-            >
-              {ART_STYLE_KEYS.map(key => (
-                <option key={key} value={key}>{ART_STYLES[key].name}</option>
-              ))}
-            </select>
-            <span style={S.kieStatusDot(kieReady)}>
-              {kieReady ? "✓ Kie.ai" : "⚠️ API 키 필요"}
-            </span>
           </div>
 
           {/* ── 씬 분석 결과 요약 + 갤러리 링크 ── */}
@@ -3202,9 +3201,10 @@ const S = {
   container: { padding: "0", maxWidth: "1400px", margin: "0 auto" } as const,
 
   stepNav: {
-    display: "flex", gap: "4px", padding: "16px 24px",
+    display: "flex", alignItems: "center", gap: "4px", padding: "16px 24px",
     borderBottom: "1px solid #e5e7eb", background: "white",
     position: "sticky" as const, top: 0, zIndex: 10,
+    justifyContent: "space-between" as const, flexWrap: "wrap" as const,
   } as const,
   stepBtn: {
     display: "flex", alignItems: "center", gap: "8px",
@@ -3289,7 +3289,15 @@ const S = {
     color: isGemini ? "#166534" : "#92400e",
   } as const),
 
-  // ── 이미지 모델 + 스타일 선택 바 (한 줄) ──
+  // ── 상단 네비 모델/스타일 바 ──
+  navModelBar: {
+    display: "flex", alignItems: "center", gap: "8px", flexWrap: "nowrap" as const,
+    padding: "6px 12px",
+    background: "linear-gradient(135deg, #f8fafc, #eef2ff)",
+    border: "1px solid #c7d2fe", borderRadius: "8px",
+    marginLeft: "auto",
+  } as const,
+  // (legacy — kept for compat)
   modelSelectorBar: {
     display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" as const,
     padding: "10px 14px", marginBottom: "16px",
