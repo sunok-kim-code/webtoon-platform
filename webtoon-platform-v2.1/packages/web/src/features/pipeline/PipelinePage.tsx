@@ -94,6 +94,12 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(chunks.join(""));
 }
 
+/** 유효한 이미지 URL인지 체크 (http, https, blob: 모두 허용) */
+function isValidImageUrl(url: string | undefined | null): url is string {
+  if (!url) return false;
+  return url.startsWith("http://") || url.startsWith("https://") || url.startsWith("blob:");
+}
+
 function localKey(projectId?: string, episodeId?: string) {
   return `pipeline_${projectId || "default"}_${episodeId || "default"}`;
 }
@@ -1237,20 +1243,17 @@ export function PipelinePage() {
     if (panel && idx > 0) {
       const currentGroupId = (panel as any).sceneGroupId;
       if (currentGroupId) {
-        // 같은 그룹의 첫 패널(sceneGroupIndex === 0) 찾기
         const anchorIdx = editingPanels.findIndex(
           (p, i) => i < idx && (p as any).sceneGroupId === currentGroupId && (p as any).sceneGroupIndex === 0
         );
         if (anchorIdx >= 0 && anchorIdx !== idx - 1) {
-          // 앵커가 직전 패널이 아닌 경우에만 추가 (직전 패널은 아래에서 따로 처리)
           const anchorImg = generatedImages[anchorIdx];
-          if (anchorImg && anchorImg.startsWith("http")) anchorRefs.push(anchorImg);
+          if (isValidImageUrl(anchorImg)) anchorRefs.push(anchorImg);
         }
       }
-      // 에피소드 첫 패널도 앵커로 (전체 스타일 기준점)
       if (idx > 1) {
         const firstImg = generatedImages[0];
-        if (firstImg && firstImg.startsWith("http") && !anchorRefs.includes(firstImg)) {
+        if (isValidImageUrl(firstImg) && !anchorRefs.includes(firstImg)) {
           anchorRefs.push(firstImg);
         }
       }
@@ -1259,13 +1262,12 @@ export function PipelinePage() {
     // 1) 이전 패널 이미지 (가장 중요 — 스타일 연속성, 가중치 부여를 위해 직전 패널 ×3 중복)
     if (idx > 0 && !excluded?.has("prev")) {
       const prevImg = generatedImages[idx - 1];
-      if (prevImg && prevImg.startsWith("http")) {
-        // 직전 패널을 3회 삽입하여 모델이 더 강하게 참조하도록 가중치 부여
+      if (isValidImageUrl(prevImg)) {
         prevPanelRefs.push(prevImg, prevImg, prevImg);
       }
       if (idx > 1) {
         const prev2Img = generatedImages[idx - 2];
-        if (prev2Img && prev2Img.startsWith("http")) prevPanelRefs.push(prev2Img);
+        if (isValidImageUrl(prev2Img)) prevPanelRefs.push(prev2Img);
       }
     }
 
@@ -1282,14 +1284,14 @@ export function PipelinePage() {
         }
         if (outfitEntry?.references?.length) {
           const best = [...outfitEntry.references].sort((a, b) => (b.quality || 0) - (a.quality || 0))[0];
-          if (best?.storageUrl?.startsWith("http") && !charOutfitRefs.includes(best.storageUrl)) {
+          if (isValidImageUrl(best?.storageUrl) && !charOutfitRefs.includes(best.storageUrl)) {
             charOutfitRefs.push(best.storageUrl);
             outfitRefAdded = true;
           }
         }
         if (!outfitRefAdded) {
           const charRefImg = refImages[`char_${charName}`];
-          if (charRefImg && charRefImg.startsWith("http") && !charOutfitRefs.includes(charRefImg)) charOutfitRefs.push(charRefImg);
+          if (isValidImageUrl(charRefImg) && !charOutfitRefs.includes(charRefImg)) charOutfitRefs.push(charRefImg);
         }
       }
     }
@@ -1297,7 +1299,7 @@ export function PipelinePage() {
     // 3) 커스텀 레퍼런스 (사용자 수동 선택)
     const customRefs = panelCustomRefs[idx] || [];
     for (const cUrl of customRefs) {
-      if (cUrl.startsWith("http") && !customRefUrls.includes(cUrl)) customRefUrls.push(cUrl);
+      if (isValidImageUrl(cUrl) && !customRefUrls.includes(cUrl)) customRefUrls.push(cUrl);
     }
 
     // 4) 장소 레퍼런스
@@ -1310,7 +1312,7 @@ export function PipelinePage() {
             || registeredLocs.find(l => l.name === analysis.location.name);
           locRefImg = (regLoc as any)?.references?.[0]?.storageUrl;
         }
-        if (locRefImg && locRefImg.startsWith("http")) locationRefs.push(locRefImg);
+        if (isValidImageUrl(locRefImg)) locationRefs.push(locRefImg);
       }
     }
 
@@ -1385,12 +1387,33 @@ export function PipelinePage() {
     }
     const data = preparePanelData(idx);
     if (!data) return;
-    const { prompt, referenceImageUrls: finalRefUrls } = data;
+    const { prompt, referenceImageUrls: rawRefUrls } = data;
     const panel = editingPanels[idx];
+
+    setGeneratingIndex(idx);
+    setGenProgress(prev => ({ ...prev, [idx]: "레퍼런스 준비 중..." }));
+
+    // blob URL → Firebase 업로드하여 http URL로 변환 (Kie.ai API는 http URL만 전달 가능)
+    const finalRefUrls: string[] = [];
+    for (const refUrl of rawRefUrls) {
+      if (refUrl.startsWith("blob:")) {
+        try {
+          const firebaseUrl = await resolveBlobToFirebase(refUrl, `refs/ref_${idx}_${Date.now()}`);
+          if (firebaseUrl && !firebaseUrl.startsWith("blob:")) {
+            finalRefUrls.push(firebaseUrl);
+          } else {
+            console.warn(`[Panel ${idx}] blob ref 변환 실패, 스킵:`, refUrl);
+          }
+        } catch (e) {
+          console.warn(`[Panel ${idx}] blob ref 업로드 실패:`, e);
+        }
+      } else {
+        finalRefUrls.push(refUrl);
+      }
+    }
 
     console.log(`[Panel ${idx}] Refs: ${finalRefUrls.length}`, finalRefUrls);
 
-    setGeneratingIndex(idx);
     setGenProgress(prev => ({ ...prev, [idx]: "대기 중..." }));
 
     const stateLabels: Record<string, string> = { waiting: "대기 중", queuing: "큐 대기", generating: "생성 중" };
