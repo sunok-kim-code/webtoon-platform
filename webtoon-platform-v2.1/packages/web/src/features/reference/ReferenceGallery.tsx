@@ -1078,6 +1078,15 @@ export function ReferenceGallery() {
     } catch (e) { console.error("[Gallery] 장소 레퍼런스 이미지 삭제 실패:", e); }
   }, [resolvedProjectId]);
 
+  const handleDeleteOutfitRef = useCallback(async (outfitId: string, refId: string) => {
+    if (!confirm("이 의상 레퍼런스 이미지를 삭제하시겠습니까?")) return;
+    const outfit = outfits.find(o => o.id === outfitId);
+    if (!outfit || !resolvedProjectId) return;
+    const updatedOutfit: OutfitEntry = { ...outfit, references: outfit.references.filter(r => r.id !== refId), updatedAt: Date.now() };
+    addOrUpdateOutfit(updatedOutfit);
+    console.log(`[Gallery] 의상 레퍼런스 이미지 삭제: ${outfitId} / ${refId}`);
+  }, [outfits, resolvedProjectId, addOrUpdateOutfit]);
+
   // ── 필터링 ──
   const filteredCharacters = characters.filter((char) => {
     if (!selectedCharEmotion && !selectedCharOutfit && !selectedCharAngle) return true;
@@ -1806,10 +1815,17 @@ export function ReferenceGallery() {
                             {outfit.references && outfit.references.length > 0 ? (
                               <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
                                 {outfit.references.map(ref => (
-                                  <div key={ref.id}
-                                    onClick={() => setLightbox({ url: ref.storageUrl, title: `${outfit.characterName} — ${outfit.label}` })}
-                                    style={{ width: "54px", height: "72px", borderRadius: "6px", overflow: "hidden", cursor: "pointer", border: "1px solid #e5e7eb", flexShrink: 0 }}>
-                                    <img src={ref.storageUrl} alt={outfit.label} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                  <div key={ref.id} style={{ position: "relative", flexShrink: 0 }}>
+                                    <div
+                                      onClick={() => setLightbox({ url: ref.storageUrl, title: `${outfit.characterName} — ${outfit.label}` })}
+                                      style={{ width: "54px", height: "72px", borderRadius: "6px", overflow: "hidden", cursor: "pointer", border: "1px solid #e5e7eb" }}>
+                                      <img src={ref.storageUrl} alt={outfit.label} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                    </div>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); handleDeleteOutfitRef(outfit.id, ref.id); }}
+                                      style={{ position: "absolute", top: "-4px", right: "-4px", width: "16px", height: "16px", borderRadius: "50%", border: "none", background: "#ef4444", color: "#fff", fontSize: "10px", lineHeight: "16px", textAlign: "center", cursor: "pointer", padding: 0, zIndex: 1 }}
+                                      title="이미지 삭제"
+                                    >✕</button>
                                   </div>
                                 ))}
                               </div>
