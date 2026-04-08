@@ -1141,6 +1141,179 @@ export function ReferenceGallery() {
     console.log(`[Gallery] 의상 레퍼런스 이미지 삭제: ${outfitId} / ${refId}`);
   }, [outfits, resolvedProjectId, addOrUpdateOutfit]);
 
+  // ── 이미지 교체 업로드 (캐릭터/장소/의상 공통) ──
+  const replaceFileInput = useRef<HTMLInputElement>(null);
+  const replaceTarget = useRef<{ type: "char" | "loc" | "outfit"; entityId: string; refId: string } | null>(null);
+
+  const triggerReplaceUpload = useCallback((type: "char" | "loc" | "outfit", entityId: string, refId: string) => {
+    replaceTarget.current = { type, entityId, refId };
+    replaceFileInput.current?.click();
+  }, []);
+
+  const handleReplaceUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const target = replaceTarget.current;
+    e.target.value = "";
+    if (!file || !target || !resolvedProjectId) return;
+
+    const localUrl = URL.createObjectURL(file);
+    try {
+      // Firebase에 즉시 업로드
+      const firebaseUrl = await uploadImageToFirebase(localUrl, `refs/${target.type}_${target.entityId}_replace`);
+      URL.revokeObjectURL(localUrl);
+
+      const now = Date.now();
+      if (target.type === "char") {
+        const char = characters.find(c => c.id === target.entityId);
+        if (!char) return;
+        const updatedRefs = char.references.map(r => r.id === target.refId ? { ...r, storageUrl: firebaseUrl, updatedAt: now } : r);
+        const updatedChar = { ...char, references: updatedRefs, updatedAt: now };
+        setCharacters(characters.map(c => c.id === char.id ? updatedChar : c));
+        await firebaseService.saveCharacter(resolvedProjectId, updatedChar);
+      } else if (target.type === "loc") {
+        const { locations: curLocs } = useReferenceStore.getState();
+        const loc = curLocs.find(l => l.id === target.entityId);
+        if (!loc) return;
+        const updatedRefs = loc.references.map(r => r.id === target.refId ? { ...r, storageUrl: firebaseUrl, updatedAt: now } : r);
+        const updatedLoc = { ...loc, references: updatedRefs, updatedAt: now };
+        useReferenceStore.getState().setLocations(curLocs.map(l => l.id === loc.id ? updatedLoc : l));
+        await firebaseService.saveLocation(resolvedProjectId, updatedLoc);
+      } else if (target.type === "outfit") {
+        const outfit = outfits.find(o => o.id === target.entityId);
+        if (!outfit) return;
+        const updatedRefs = outfit.references.map(r => r.id === target.refId ? { ...r, storageUrl: firebaseUrl, updatedAt: now } : r);
+        addOrUpdateOutfit({ ...outfit, references: updatedRefs, updatedAt: now });
+      }
+      console.log(`[Gallery] 레퍼런스 이미지 교체 완료: ${target.type}/${target.entityId}/${target.refId}`);
+    } catch (err) {
+      URL.revokeObjectURL(localUrl);
+      console.error("[Gallery] 이미지 교체 실패:", err);
+      alert("이미지 교체에 실패했습니다.");
+    }
+  }, [characters, outfits, resolvedProjectId, setCharacters, addOrUpdateOutfit, uploadImageToFirebase]);
+
+  // ── 새 이미지 추가 업로드 (캐릭터/장소/의상 공통) ──
+  const addFileInput = useRef<HTMLInputElement>(null);
+  const addTarget = useRef<{ type: "char" | "loc" | "outfit"; entityId: string } | null>(null);
+
+  const triggerAddUpload = useCallback((type: "char" | "loc" | "outfit", entityId: string) => {
+    addTarget.current = { type, entityId };
+    addFileInput.current?.click();
+  }, []);
+
+  const handleAddUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const target = addTarget.current;
+    e.target.value = "";
+    if (!file || !target || !resolvedProjectId) return;
+
+    const localUrl = URL.createObjectURL(file);
+    try {
+      const firebaseUrl = await uploadImageToFirebase(localUrl, `refs/${target.type}_${target.entityId}_upload`);
+      URL.revokeObjectURL(localUrl);
+
+      const now = Date.now();
+      const newRef: ReferenceImage = {
+        id: `ref_${now}_upload`,
+        storageUrl: firebaseUrl,
+        tags: target.type === "loc"
+          ? { timeOfDay: "afternoon", weather: "clear", mood: "bright" }
+          : { emotion: "neutral", outfit: "default", angle: "front" } as any,
+        sourceEpisode: "", sourcePanel: 0, usageCount: 0, quality: 3, createdAt: now,
+      };
+
+      if (target.type === "char") {
+        const char = characters.find(c => c.id === target.entityId);
+        if (!char) return;
+        const updatedChar = { ...char, references: [...char.references, newRef], updatedAt: now };
+        setCharacters(characters.map(c => c.id === char.id ? updatedChar : c));
+        await firebaseService.saveCharacter(resolvedProjectId, updatedChar);
+      } else if (target.type === "loc") {
+        const { locations: curLocs } = useReferenceStore.getState();
+        const loc = curLocs.find(l => l.id === target.entityId);
+        if (!loc) return;
+        const updatedLoc = { ...loc, references: [...loc.references, newRef], updatedAt: now };
+        useReferenceStore.getState().setLocations(curLocs.map(l => l.id === loc.id ? updatedLoc : l));
+        await firebaseService.saveLocation(resolvedProjectId, updatedLoc);
+      } else if (target.type === "outfit") {
+        const outfit = outfits.find(o => o.id === target.entityId);
+        if (!outfit) return;
+        addOrUpdateOutfit({ ...outfit, references: [...outfit.references, newRef], updatedAt: now });
+      }
+      console.log(`[Gallery] 이미지 추가 업로드 완료: ${target.type}/${target.entityId}`);
+    } catch (err) {
+      URL.revokeObjectURL(localUrl);
+      console.error("[Gallery] 이미지 추가 실패:", err);
+      alert("이미지 업로드에 실패했습니다.");
+    }
+  }, [characters, outfits, resolvedProjectId, setCharacters, addOrUpdateOutfit, uploadImageToFirebase]);
+
+  // ── 전체 레퍼런스 Firebase 일괄 저장 ──
+  const [isSavingAllRefs, setIsSavingAllRefs] = useState(false);
+  const saveAllRefsToFirebase = useCallback(async () => {
+    if (!resolvedProjectId) return;
+    setIsSavingAllRefs(true);
+    let count = 0;
+    try {
+      // 캐릭터
+      for (const char of characters) {
+        let changed = false;
+        const updatedRefs = await Promise.all(char.references.map(async (ref) => {
+          if (!ref.storageUrl.startsWith("https://firebasestorage.googleapis.com")) {
+            const firebaseUrl = await uploadImageToFirebase(ref.storageUrl, `refs/char_${char.id}_${ref.id}`);
+            if (firebaseUrl !== ref.storageUrl) { changed = true; count++; }
+            return { ...ref, storageUrl: firebaseUrl };
+          }
+          return ref;
+        }));
+        if (changed) {
+          const updatedChar = { ...char, references: updatedRefs, updatedAt: Date.now() };
+          setCharacters(characters.map(c => c.id === char.id ? updatedChar : c));
+          await firebaseService.saveCharacter(resolvedProjectId, updatedChar);
+        }
+      }
+      // 장소
+      const { locations: curLocs } = useReferenceStore.getState();
+      for (const loc of curLocs) {
+        let changed = false;
+        const updatedRefs = await Promise.all(loc.references.map(async (ref) => {
+          if (!ref.storageUrl.startsWith("https://firebasestorage.googleapis.com")) {
+            const firebaseUrl = await uploadImageToFirebase(ref.storageUrl, `refs/loc_${loc.id}_${ref.id}`);
+            if (firebaseUrl !== ref.storageUrl) { changed = true; count++; }
+            return { ...ref, storageUrl: firebaseUrl };
+          }
+          return ref;
+        }));
+        if (changed) {
+          const updatedLoc = { ...loc, references: updatedRefs, updatedAt: Date.now() };
+          useReferenceStore.getState().setLocations(curLocs.map(l => l.id === loc.id ? updatedLoc : l));
+          await firebaseService.saveLocation(resolvedProjectId, updatedLoc);
+        }
+      }
+      // 의상
+      for (const outfit of outfits) {
+        let changed = false;
+        const updatedRefs = await Promise.all(outfit.references.map(async (ref) => {
+          if (!ref.storageUrl.startsWith("https://firebasestorage.googleapis.com")) {
+            const firebaseUrl = await uploadImageToFirebase(ref.storageUrl, `refs/outfit_${outfit.id}_${ref.id}`);
+            if (firebaseUrl !== ref.storageUrl) { changed = true; count++; }
+            return { ...ref, storageUrl: firebaseUrl };
+          }
+          return ref;
+        }));
+        if (changed) {
+          addOrUpdateOutfit({ ...outfit, references: updatedRefs, updatedAt: Date.now() });
+        }
+      }
+      alert(`Firebase 저장 완료: ${count}개 이미지 업로드됨`);
+    } catch (err) {
+      console.error("[Gallery] 전체 Firebase 저장 실패:", err);
+      alert("일부 이미지 저장에 실패했습니다.");
+    } finally {
+      setIsSavingAllRefs(false);
+    }
+  }, [characters, outfits, resolvedProjectId, setCharacters, addOrUpdateOutfit, uploadImageToFirebase]);
+
   // ── 필터링 ──
   const filteredCharacters = characters.filter((char) => {
     if (!selectedCharEmotion && !selectedCharOutfit && !selectedCharAngle) return true;
@@ -1203,15 +1376,30 @@ export function ReferenceGallery() {
           <span style={styles.projectBadge}>{resolvedProjectId}</span>
           {loading && <span style={{ color: "#999", fontSize: "13px" }}>로딩 중...</span>}
         </div>
-        <div style={styles.tabNav}>
-          <button onClick={() => setActiveTab("characters")} style={styles.tabButton(activeTab === "characters")}>
-            캐릭터 ({characters.length})
-          </button>
-          <button onClick={() => setActiveTab("locations")} style={styles.tabButton(activeTab === "locations")}>
-            장소 ({locations.length})
-          </button>
-          <button onClick={() => setActiveTab("outfits")} style={styles.tabButton(activeTab === "outfits")}>
-            의상 라이브러리 ({outfits.length})
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <div style={styles.tabNav}>
+            <button onClick={() => setActiveTab("characters")} style={styles.tabButton(activeTab === "characters")}>
+              캐릭터 ({characters.length})
+            </button>
+            <button onClick={() => setActiveTab("locations")} style={styles.tabButton(activeTab === "locations")}>
+              장소 ({locations.length})
+            </button>
+            <button onClick={() => setActiveTab("outfits")} style={styles.tabButton(activeTab === "outfits")}>
+              의상 라이브러리 ({outfits.length})
+            </button>
+          </div>
+          <button
+            onClick={saveAllRefsToFirebase}
+            disabled={isSavingAllRefs}
+            style={{
+              marginLeft: "auto", padding: "6px 14px", borderRadius: "8px",
+              border: "none", cursor: isSavingAllRefs ? "not-allowed" : "pointer",
+              background: isSavingAllRefs ? "#9CA3AF" : "#059669", color: "#fff",
+              fontSize: "12px", fontWeight: 700, whiteSpace: "nowrap",
+              opacity: isSavingAllRefs ? 0.7 : 1,
+            }}
+          >
+            {isSavingAllRefs ? "⏳ 저장 중..." : "💾 전체 Firebase 저장"}
           </button>
         </div>
       </div>
@@ -1543,6 +1731,16 @@ export function ReferenceGallery() {
                                 title={isBase ? "기준 외형 해제" : "기준 외형으로 지정"}
                               >📌</button>
                               <button
+                                onClick={(e) => { e.stopPropagation(); triggerReplaceUpload("char", char.id, ref.id); }}
+                                style={{
+                                  position: "absolute", top: "2px", right: "40px",
+                                  background: "rgba(0,0,0,0.55)", border: "none", borderRadius: "3px",
+                                  cursor: "pointer", color: "#e5e7eb", fontSize: "11px",
+                                  padding: "1px 4px", lineHeight: 1,
+                                }}
+                                title="이미지 교체"
+                              >🔄</button>
+                              <button
                                 onClick={(e) => { e.stopPropagation(); handleDeleteCharRef(char.id, ref.id); }}
                                 style={styles.refImageDeleteBtn}
                                 title="이미지 삭제"
@@ -1597,6 +1795,16 @@ export function ReferenceGallery() {
                           }}
                         />
                       </label>
+                      <button
+                        onClick={() => triggerAddUpload("char", char.id)}
+                        style={{
+                          ...styles.refGenAreaBtn,
+                          background: "#374151", border: "1px solid #4b5563",
+                          color: "#d1d5db",
+                        }}
+                      >
+                        + 이미지 추가
+                      </button>
                       {refGenProgress[gKey] && (
                         <span style={styles.refGenAreaProgress}>{refGenProgress[gKey]}</span>
                       )}
@@ -1669,6 +1877,16 @@ export function ReferenceGallery() {
                       onClick={() => setLightbox({ url: ref.storageUrl, title: `${loc.name} 레퍼런스` })}>
                       <img src={ref.storageUrl} alt={loc.name} style={styles.refImageEl} />
                       <button
+                        onClick={(e) => { e.stopPropagation(); triggerReplaceUpload("loc", loc.id, ref.id); }}
+                        style={{
+                          position: "absolute", top: "2px", right: "22px",
+                          background: "rgba(0,0,0,0.55)", border: "none", borderRadius: "3px",
+                          cursor: "pointer", color: "#e5e7eb", fontSize: "11px",
+                          padding: "1px 4px", lineHeight: 1,
+                        }}
+                        title="이미지 교체"
+                      >🔄</button>
+                      <button
                         onClick={(e) => { e.stopPropagation(); handleDeleteLocRef(loc.id, ref.id); }}
                         style={styles.refImageDeleteBtn}
                         title="이미지 삭제"
@@ -1689,6 +1907,16 @@ export function ReferenceGallery() {
                           style={{ ...styles.refGenAreaBtn, opacity: isGen || generatingRefId !== null || !kieReady ? 0.6 : 1 }}
                         >
                           {isGen ? "생성 중..." : "+ AI 레퍼런스 생성"}
+                        </button>
+                        <button
+                          onClick={() => triggerAddUpload("loc", loc.id)}
+                          style={{
+                            ...styles.refGenAreaBtn,
+                            background: "#1f2937", border: "1px solid #374151",
+                            color: "#9ca3af",
+                          }}
+                        >
+                          + 이미지 추가
                         </button>
                         {refGenProgress[gKey] && <span style={styles.refGenAreaProgress}>{refGenProgress[gKey]}</span>}
                       </div>
@@ -1876,6 +2104,11 @@ export function ReferenceGallery() {
                                       <img src={ref.storageUrl} alt={outfit.label} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                                     </div>
                                     <button
+                                      onClick={(e) => { e.stopPropagation(); triggerReplaceUpload("outfit", outfit.id, ref.id); }}
+                                      style={{ position: "absolute", top: "-4px", right: "14px", width: "16px", height: "16px", borderRadius: "50%", border: "none", background: "#2563eb", color: "#fff", fontSize: "9px", lineHeight: "16px", textAlign: "center", cursor: "pointer", padding: 0, zIndex: 1 }}
+                                      title="이미지 교체"
+                                    >🔄</button>
+                                    <button
                                       onClick={(e) => { e.stopPropagation(); handleDeleteOutfitRef(outfit.id, ref.id); }}
                                       style={{ position: "absolute", top: "-4px", right: "-4px", width: "16px", height: "16px", borderRadius: "50%", border: "none", background: "#ef4444", color: "#fff", fontSize: "10px", lineHeight: "16px", textAlign: "center", cursor: "pointer", padding: 0, zIndex: 1 }}
                                       title="이미지 삭제"
@@ -1901,12 +2134,26 @@ export function ReferenceGallery() {
                                 >
                                   {isGenning ? "생성중…" : outfit.references?.length ? "재생성" : "캐릭터+의상 생성"}
                                 </button>
+                                <button
+                                  onClick={() => triggerAddUpload("outfit", outfit.id)}
+                                  style={{ fontSize: "11px", padding: "4px 10px", borderRadius: "6px", border: "1px solid #4b5563", cursor: "pointer", background: "#1f2937", color: "#d1d5db", whiteSpace: "nowrap" }}
+                                >
+                                  + 이미지 추가
+                                </button>
                                 {!charBaseRef && (
                                   <span style={{ fontSize: "10px", color: "#f59e0b" }}>⚠️ 캐릭터탭에서 기준 이미지를 먼저 생성·핀해주세요</span>
                                 )}
                               </>
                             ) : (
-                              <span style={{ fontSize: "11px", color: "#ef4444" }}>⚠️ 캐릭터 미연결 — [캐릭터 연결 복구] 버튼 클릭</span>
+                              <>
+                                <span style={{ fontSize: "11px", color: "#ef4444" }}>⚠️ 캐릭터 미연결 — [캐릭터 연결 복구] 버튼 클릭</span>
+                                <button
+                                  onClick={() => triggerAddUpload("outfit", outfit.id)}
+                                  style={{ fontSize: "11px", padding: "4px 10px", borderRadius: "6px", border: "1px solid #4b5563", cursor: "pointer", background: "#1f2937", color: "#d1d5db", whiteSpace: "nowrap" }}
+                                >
+                                  + 이미지 추가
+                                </button>
+                              </>
                             )}
                             {prog && <span style={{ fontSize: "10px", color: prog.startsWith("✓") ? "#10B981" : prog.startsWith("❌") ? "#EF4444" : "#6b7280" }}>{prog}</span>}
                           </div>
@@ -2140,6 +2387,10 @@ export function ReferenceGallery() {
           </div>
         </div>
       )}
+
+      {/* ═══════ Hidden file inputs for replace / add ═══════ */}
+      <input type="file" ref={replaceFileInput} onChange={handleReplaceUpload} hidden accept="image/*" />
+      <input type="file" ref={addFileInput} onChange={handleAddUpload} hidden accept="image/*" />
 
       {/* ═══════ 프롬프트 미리보기/편집 팝업 (캐릭터 & 장소 공용) ═══════ */}
       {promptPopup.open && (() => {
