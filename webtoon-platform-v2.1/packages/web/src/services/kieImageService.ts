@@ -644,7 +644,7 @@ async function callVertexGeminiImage(
       }
     }
     parts.push({
-      text: `[CRITICAL STYLE CONTINUITY] The above reference images are from PREVIOUS PANELS in the same webtoon/comic. You MUST exactly match: art style, linework, color palette, character face/body proportions, hair style, skin tone, shading technique, and background detail level. The new image must look like it was drawn by the SAME ARTIST in the SAME SESSION as the reference images.\n\nGenerate a new image based on the following description:\n\n${prompt}`,
+      text: `[CRITICAL STYLE CONTINUITY] The above reference images are from PREVIOUS PANELS in the same webtoon/comic. The FIRST image is the immediately preceding panel and has the HIGHEST priority — match it most closely. You MUST exactly match: art style, linework, color palette, character face/body proportions, hair style, skin tone, shading technique, and background detail level. The new image must look like it was drawn by the SAME ARTIST in the SAME SESSION. Copy the STYLE only, not the CONTENT — draw only what the prompt below describes.\n\nGenerate a new image based on the following description:\n\n${prompt}`,
     });
   } else {
     parts.push({ text: prompt });

@@ -1209,10 +1209,13 @@ export function PipelinePage() {
     const customRefUrls: string[] = [];   // 커스텀 ref
     const locationRefs: string[] = [];    // 장소 ref
 
-    // 1) 이전 패널 이미지 (가장 중요 — 스타일 연속성)
+    // 1) 이전 패널 이미지 (가장 중요 — 스타일 연속성, 가중치 부여를 위해 직전 패널 ×3 중복)
     if (idx > 0 && !excluded?.has("prev")) {
       const prevImg = generatedImages[idx - 1];
-      if (prevImg && prevImg.startsWith("http")) prevPanelRefs.push(prevImg);
+      if (prevImg && prevImg.startsWith("http")) {
+        // 직전 패널을 3회 삽입하여 모델이 더 강하게 참조하도록 가중치 부여
+        prevPanelRefs.push(prevImg, prevImg, prevImg);
+      }
       if (idx > 1) {
         const prev2Img = generatedImages[idx - 2];
         if (prev2Img && prev2Img.startsWith("http")) prevPanelRefs.push(prev2Img);
@@ -1273,17 +1276,17 @@ export function PipelinePage() {
     const finalRefUrls = uniqueRefs; // 제한 없이 모든 ref 전달
 
     if (idx > 0) {
-      // ── 이전 패널 씬 묘사를 포함하여 장면 전환의 연속성 확보 ──
+      // ── 이전 패널 컨텍스트: 스타일/분위기만 참조, 내용은 현재 패널만 그리도록 명확히 분리 ──
       const prevPanel = editingPanels[idx - 1];
       if (prevPanel) {
         const prevDesc = prevPanel.sceneDescription || prevPanel.description || "";
         if (prevDesc) {
-          prompt += `\n\n[PREVIOUS PANEL CONTEXT] The immediately preceding panel shows: ${prevDesc}. This panel continues directly from that scene — maintain spatial continuity, character positions, lighting direction, and environment details.`;
+          prompt += `\n\n[CONTINUITY NOTE — DO NOT DRAW THIS] The previous panel depicted: "${prevDesc}". This is context only — do NOT include any elements from the previous panel unless they are also described in the current panel above. Only use this to maintain consistent lighting, time of day, and overall mood.`;
         }
       }
 
       if (generatedImages[idx - 1]) {
-        prompt += "\n\n[STYLE LOCK — CRITICAL] You MUST maintain IDENTICAL art style, character appearance, and visual consistency with the previous panels provided as reference images. Specifically preserve: same linework weight and thickness, same color palette and saturation, same shading/lighting technique, same character face shape/proportions/hair style, same skin tone rendering, same background detail level. Every panel must look like the SAME ARTIST drew it in ONE SESSION. The reference images are from immediately preceding panels in the same comic — match them exactly.";
+        prompt += "\n\n[STYLE LOCK] The FIRST reference image is the immediately preceding panel — it has the HIGHEST priority. Match its art style EXACTLY: same linework, color palette, shading, character proportions, and skin tone. Copy the STYLE only, not the CONTENT. Maintain visual flow so the panels feel like consecutive frames from the same artist.";
       }
 
       prompt += "\nDo NOT render any text, letters, words, sound effects, onomatopoeia, or speech bubbles in the image.";
