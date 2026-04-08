@@ -1247,7 +1247,7 @@ export function PipelinePage() {
       prompt = artStyle.prefix + prompt;
     }
 
-    // ── Reference Resolver로 프롬프트 강화 ──
+    // ── Reference Resolver로 프롬프트 강화 (제외된 레퍼런스 제외) ──
     if (analysis && panel) {
       const store = useReferenceStore.getState();
       const currentResolver = new ReferenceResolver(
@@ -1256,13 +1256,16 @@ export function PipelinePage() {
         contextChainRef.current,
         store.outfits
       );
-      const panelCharAnalysis = analysis.characters.find(c => panel.characters.includes(c.name));
+      // 제외된 캐릭터/장소 필터링
+      const activeChars = panel.characters.filter(cn => !excluded?.has(`char_${cn}`));
+      const panelCharAnalysis = analysis.characters.find(c => activeChars.includes(c.name));
       const panelOutfit = panelCharAnalysis?.outfit || undefined;
       const panelLocName = panel.location || analysis.location.name;
+      const locExcluded = excluded?.has(`loc_${panelLocName}`);
       const panelLoc = (analysis as any).locations?.find((l: any) => l.name === panelLocName) || analysis.location;
       const resolved = currentResolver.resolve({
-        characters: panel.characters, emotion: panel.emotion, outfit: panelOutfit,
-        location: panelLocName, timeOfDay: panelLoc.timeOfDay, mood: panelLoc.mood,
+        characters: activeChars, emotion: panel.emotion, outfit: panelOutfit,
+        location: locExcluded ? "" : panelLocName, timeOfDay: locExcluded ? "" : panelLoc.timeOfDay, mood: locExcluded ? "" : panelLoc.mood,
         currentEpisode: episodeId || "", currentPanel: idx,
       });
       if (resolved.length > 0) {
@@ -1280,7 +1283,8 @@ export function PipelinePage() {
     const locationRefs: string[] = [];    // 장소 ref
 
     // 0) 씬 그룹 앵커 패널 (같은 sceneGroupId의 첫 패널 이미지 — 스타일 드리프트 방지)
-    if (panel && idx > 0) {
+    //    ※ anchor/first 패널도 excluded에 포함되면 건너뜀
+    if (panel && idx > 0 && !excluded?.has("anchor")) {
       const currentGroupId = (panel as any).sceneGroupId;
       if (currentGroupId) {
         const anchorIdx = editingPanels.findIndex(
@@ -1364,6 +1368,14 @@ export function PipelinePage() {
     }
     const finalRefUrls = uniqueRefs; // 제한 없이 모든 ref 전달
 
+    // 디버그: 제외된 레퍼런스와 최종 전달 레퍼런스 로그
+    if (excluded && excluded.size > 0) {
+      console.log(`[Panel ${idx + 1}] 제외된 refs:`, [...excluded]);
+    }
+    console.log(`[Panel ${idx + 1}] 최종 레퍼런스 ${finalRefUrls.length}개:`,
+      { prev: prevPanelRefs.length, anchor: anchorRefs.length, char: charOutfitRefs.length, custom: customRefUrls.length, loc: locationRefs.length }
+    );
+
     // ── 글로벌 스타일 지시문 (분석 결과에서 추출) ──
     const globalStyle = (analysis as any)?.globalStyleDirective;
     if (globalStyle) {
@@ -1388,22 +1400,25 @@ export function PipelinePage() {
       prompt += ` ${tagDescriptions[continuityTag] || continuityTag}`;
     }
 
+    const prevExcluded = excluded?.has("prev");
     if (idx > 0) {
       // ── 델타 서술: 이전 패널 대비 변경점만 명시 ──
-      if (delta) {
+      if (delta && !prevExcluded) {
         prompt += `\n\n[DELTA FROM PREVIOUS PANEL — changes only] ${delta}`;
       }
 
-      // ── 이전 패널 컨텍스트: 스타일/분위기만 참조, 내용은 현재 패널만 그리도록 명확히 분리 ──
-      const prevPanel = editingPanels[idx - 1];
-      if (prevPanel) {
-        const prevDesc = prevPanel.sceneDescription || prevPanel.description || "";
-        if (prevDesc) {
-          prompt += `\n\n[CONTINUITY NOTE — DO NOT DRAW THIS] The previous panel depicted: "${prevDesc}". This is context only — do NOT include any elements from the previous panel unless they are also described in the current panel above. Only use this to maintain consistent lighting, time of day, and overall mood.`;
+      // ── 이전 패널 컨텍스트 (prev 제외 시 스킵) ──
+      if (!prevExcluded) {
+        const prevPanel = editingPanels[idx - 1];
+        if (prevPanel) {
+          const prevDesc = prevPanel.sceneDescription || prevPanel.description || "";
+          if (prevDesc) {
+            prompt += `\n\n[CONTINUITY NOTE — DO NOT DRAW THIS] The previous panel depicted: "${prevDesc}". This is context only — do NOT include any elements from the previous panel unless they are also described in the current panel above. Only use this to maintain consistent lighting, time of day, and overall mood.`;
+          }
         }
       }
 
-      if (generatedImages[idx - 1]) {
+      if (generatedImages[idx - 1] && !prevExcluded) {
         prompt += "\n\n[STYLE LOCK] The FIRST reference image is the immediately preceding panel — it has the HIGHEST priority. Match its art style EXACTLY: same linework, color palette, shading, character proportions, and skin tone. Copy the STYLE only, not the CONTENT. Maintain visual flow so the panels feel like consecutive frames from the same artist.";
         if (anchorRefs.length > 0) {
           prompt += " Additional reference images include the SCENE ANCHOR (first panel of this scene group) and the EPISODE ANCHOR (first panel of the episode) — use them to prevent style drift over many panels.";
