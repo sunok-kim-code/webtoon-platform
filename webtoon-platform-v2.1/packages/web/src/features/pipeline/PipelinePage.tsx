@@ -1843,6 +1843,42 @@ export function PipelinePage() {
       cameraAngle: "medium shot", emotion: "neutral", composition: "", aiPrompt: "", notes: "",
     }]);
   };
+  const insertPanelAfter = (idx: number) => {
+    if (editingPanels.length >= 60) { alert("최대 60패널"); return; }
+    const newPanel: GeminiPanelSuggestion = {
+      panelNumber: idx + 2,
+      description: "",
+      characters: analysis?.characters.map(c => c.name) || [],
+      cameraAngle: "medium shot",
+      emotion: "neutral",
+      composition: "",
+      aiPrompt: "",
+      notes: "",
+    };
+    setEditingPanels(prev => {
+      const next = [...prev.slice(0, idx + 1), newPanel, ...prev.slice(idx + 1)];
+      return next.map((p, i) => ({ ...p, panelNumber: i + 1 }));
+    });
+    // panelPrompts / generatedImages 인덱스 시프트
+    setPanelPrompts(prev => {
+      const next: Record<number, string> = {};
+      Object.entries(prev).forEach(([k, v]) => {
+        const ki = parseInt(k);
+        if (ki <= idx) next[ki] = v;
+        else next[ki + 1] = v;
+      });
+      return next;
+    });
+    setGeneratedImages(prev => {
+      const next: Record<number, string> = {};
+      Object.entries(prev).forEach(([k, v]) => {
+        const ki = parseInt(k);
+        if (ki <= idx) next[ki] = v;
+        else next[ki + 1] = v;
+      });
+      return next;
+    });
+  };
   const removePanel = (idx: number) => {
     setEditingPanels(prev => prev.filter((_, i) => i !== idx).map((p, i) => ({ ...p, panelNumber: i + 1 })));
     setPanelPrompts(prev => {
@@ -2203,6 +2239,7 @@ export function PipelinePage() {
                       <div style={S.panelActions}>
                         <button onClick={() => movePanel(idx, "up")} disabled={idx === 0} style={S.iconBtn}>위로</button>
                         <button onClick={() => movePanel(idx, "down")} disabled={idx === editingPanels.length - 1} style={S.iconBtn}>아래로</button>
+                        <button onClick={() => insertPanelAfter(idx)} style={{ ...S.iconBtn, color: "#059669", borderColor: "#A7F3D0" }}>+ 추가</button>
                         <button onClick={() => removePanel(idx)} style={S.deleteIconBtn}>삭제</button>
                       </div>
                     </div>
