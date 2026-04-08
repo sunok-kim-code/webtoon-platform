@@ -2379,6 +2379,7 @@ export function PipelinePage() {
                             {/* + 버튼: 커스텀 레퍼런스 추가 */}
                             <div style={{ position: "relative" }}>
                               <div
+                                data-ref-picker={idx}
                                 style={{
                                   ...S.refThumbItem,
                                   borderColor: "#D1D5DB",
@@ -2396,10 +2397,23 @@ export function PipelinePage() {
                                 <span style={{ fontSize: "20px", color: "#9CA3AF", lineHeight: 1 }}>+</span>
                                 <span style={{ fontSize: "9px", color: "#9CA3AF", marginTop: "2px" }}>추가</span>
                               </div>
-                              {/* 드롭다운 피커 */}
-                              {customRefPickerPanel === idx && (
+                              {/* 드롭다운 피커 (fixed 포지션 — 패널 overflow에 의해 잘리지 않도록) */}
+                              {customRefPickerPanel === idx && <div onClick={() => setCustomRefPickerPanel(null)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />}
+                              {customRefPickerPanel === idx && (() => {
+                                // + 버튼의 화면 좌표를 기준으로 팝업 위치 계산
+                                const btnEl = document.querySelector(`[data-ref-picker="${idx}"]`);
+                                const rect = btnEl?.getBoundingClientRect();
+                                const popupTop = rect ? rect.bottom + 4 : 0;
+                                const popupLeft = rect ? rect.left : 0;
+                                // 화면 아래로 넘어가면 위쪽으로
+                                const flipUp = rect ? (rect.bottom + 280 > window.innerHeight) : false;
+                                return (
                                 <div style={{
-                                  position: "absolute", top: "100%", left: 0, zIndex: 50,
+                                  position: "fixed",
+                                  top: flipUp ? "auto" : `${popupTop}px`,
+                                  bottom: flipUp && rect ? `${window.innerHeight - rect.top + 4}px` : "auto",
+                                  left: `${popupLeft}px`,
+                                  zIndex: 9999,
                                   background: "#fff", border: "1px solid #E5E7EB", borderRadius: "8px",
                                   boxShadow: "0 4px 12px rgba(0,0,0,0.15)", padding: "8px", minWidth: "180px",
                                   maxHeight: "260px", overflowY: "auto",
@@ -2461,7 +2475,8 @@ export function PipelinePage() {
                                     </button>
                                   </div>
                                 </div>
-                              )}
+                                );
+                              })()}
                             </div>
                           </div>
                         </div>
