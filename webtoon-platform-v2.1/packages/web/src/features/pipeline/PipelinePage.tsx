@@ -440,25 +440,37 @@ export function PipelinePage() {
     return () => { if (sceneTextSaveTimerRef.current) clearTimeout(sceneTextSaveTimerRef.current); };
   }, [sceneText, dataLoaded, projectId, episodeId]);
 
-  // ── blob URL → Firebase Storage 업로드 헬퍼 ──
+  // ── blob URL → Firebase Storage 업로드 헬퍼 (서버 API 경유) ──
   const resolveBlobToFirebase = useCallback(async (url: string, subPath: string): Promise<string> => {
     if (!url.startsWith("blob:")) return url; // 이미 원격 URL이면 그대로
-    const file = localFileMap.current.get(url);
-    if (file) {
-      const ext = file.name.split(".").pop() || "png";
-      const path = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/${subPath}_${Date.now()}.${ext}`;
-      return await uploadImage(path, file);
-    }
-    // localFileMap에 없으면 fetch 시도 (blob이 아직 유효한 경우)
     try {
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`fetch failed: ${resp.status}`);
-      const blob = await resp.blob();
-      const path = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/${subPath}_${Date.now()}.png`;
-      return await uploadImage(path, blob);
+      // blob URL을 fetch → base64 → 서버 API로 업로드
+      let blob: Blob;
+      const file = localFileMap.current.get(url);
+      if (file) {
+        blob = file;
+      } else {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`fetch failed: ${resp.status}`);
+        blob = await resp.blob();
+      }
+      const arrayBuffer = await blob.arrayBuffer();
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+      const contentType = blob.type || "image/png";
+      const ext = contentType.split("/")[1] || "png";
+      const storagePath = `webtoon_projects/${projectId || "default"}/${episodeId || "default"}/${subPath}_${Date.now()}.${ext}`;
+
+      const uploadResp = await fetch("/api/image-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: base64, contentType, storagePath }),
+      });
+      if (!uploadResp.ok) throw new Error(`서버 업로드 실패 (${uploadResp.status})`);
+      const { url: firebaseUrl } = await uploadResp.json();
+      return firebaseUrl;
     } catch (e) {
-      // blob URL 만료 — 다음 저장에서 재시도할 수 있도록 원본 URL 반환
-      console.warn(`[resolveBlobToFirebase] blob URL 만료, 변환 불가: ${url}`, e);
+      // 업로드 실패 — 원본 blob URL 유지 (화면에는 계속 보임)
+      console.warn(`[resolveBlobToFirebase] 업로드 실패, blob URL 유지: ${url}`, e);
       return url;
     }
   }, [projectId, episodeId]);
