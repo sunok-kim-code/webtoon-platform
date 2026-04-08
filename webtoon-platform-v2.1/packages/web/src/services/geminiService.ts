@@ -708,7 +708,7 @@ async function callGoogleGemini(prompt: string, authMode: "ai-studio" | "vertex-
         temperature: 0.7,
         topK: 40,
         topP: 0.95,
-        maxOutputTokens: 8192,
+        maxOutputTokens: 65536,
         responseMimeType: "application/json",
       },
     }),
