@@ -780,8 +780,11 @@ async function callXaiGrokImage(
 
   const aspectRatio = XAI_GROK_RATIO[sizeKey] || "3:4";
 
-  // 항상 generations 엔드포인트 사용 (edits는 multipart 필요)
-  const url = "https://api.x.ai/v1/images/generations";
+  const hasRef = referenceImageUrls && referenceImageUrls.length > 0;
+  // 레퍼런스 이미지가 있으면 edits 엔드포인트, 없으면 generations 엔드포인트
+  const url = hasRef
+    ? "https://api.x.ai/v1/images/edits"
+    : "https://api.x.ai/v1/images/generations";
 
   const body: Record<string, unknown> = {
     model: "grok-imagine-image",
@@ -789,6 +792,15 @@ async function callXaiGrokImage(
     n: 1,
     response_format: "b64_json",
   };
+
+  // 레퍼런스 이미지 전달 (edits endpoint — JSON으로 image URL 전달)
+  if (hasRef) {
+    body.image = {
+      url: referenceImageUrls[0],
+      type: "image_url",
+    };
+    console.log(`[GrokImage] Using edits endpoint with ref: ${referenceImageUrls[0].substring(0, 80)}...`);
+  }
 
   const maxRetries = 3;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
