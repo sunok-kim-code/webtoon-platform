@@ -13,6 +13,8 @@ const ALLOWED_HOSTS = [
   "api.kie.ai",
   "storage.googleapis.com",
   "firebasestorage.googleapis.com",
+  "cdn.photogenius.ai",
+  "photogenius.ai",
 ];
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
