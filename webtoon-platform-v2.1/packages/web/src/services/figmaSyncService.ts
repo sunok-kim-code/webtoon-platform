@@ -268,8 +268,8 @@ export function buildPageDataFromPanels(
       const bh = 80;
       const isLeft = di % 2 === 0;
       const bx = isLeft ? stripWidth * 0.06 : stripWidth * 0.52;
-      // 패널 하단 55%~에서 시작, 패널 높이에 비례
-      const by = panelY + panelH * 0.55 + di * 90;
+      // 패널 상단에서 시작, 대사별 간격
+      const by = panelY + 20 + di * 90;
 
       bubbles.push({
         id: `bubble_${panel.index}_${di}`,
@@ -319,11 +319,11 @@ export function buildPageDataFromPanels(
         position: { x: sx, y: sy },
         size: { w: sw, h: sh },
         style: {
-          fontSize: 30,
+          fontSize: 48,
           fontFamily: "Nanum Brush Script",
           fontWeight: 900,
           color: "#000000",
-          rotation: isLeft ? -8 : 8,
+          rotation: si % 2 === 0 ? -10 : 10,
           opacity: 0.95,
         },
         bubbleStyle: "text" as const,
