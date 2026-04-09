@@ -1511,7 +1511,7 @@ export function PipelinePage() {
     } finally {
       setGeneratingIndex(null);
     }
-  }, [preparePanelData, editingPanels, kieReady, analysis, episodeId, projectId, registeredChars, registeredLocs, registeredOutfits]);
+  }, [preparePanelData, editingPanels, kieReady, analysis, episodeId, projectId, registeredChars, registeredLocs, registeredOutfits, selectedModel]);
 
   // ── 패널 이미지 Firebase 재저장 ──
   const [savingPanelIdx, setSavingPanelIdx] = useState<number | null>(null);
