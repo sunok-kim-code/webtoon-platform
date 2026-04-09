@@ -784,7 +784,7 @@ async function callXaiGrokImage(
   const url = "https://api.x.ai/v1/images/generations";
 
   const body: Record<string, unknown> = {
-    model: "grok-2-image",
+    model: "grok-imagine-image",
     prompt: prompt.substring(0, 4000),
     n: 1,
     response_format: "b64_json",
