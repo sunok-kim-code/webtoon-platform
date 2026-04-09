@@ -5,7 +5,7 @@
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-const NINJACHAT_API_URL = "https://ninjachat.ai/api/v1/images";
+const NINJACHAT_API_URL = "https://www.ninjachat.ai/api/v1/images";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
