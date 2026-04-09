@@ -134,7 +134,8 @@ const DEFAULT_STRIP_WIDTH = 800;
 const DEFAULT_PANEL_HEIGHT = 1067; // 4:3 portrait (800 * 4/3)
 
 /**
- * 생성된 패널 이미지와 대사를 V1 호환 PageData[]로 변환합니다.
+ * 생성된 패널 이미지와 대사를 단일 페이지 PageData[]로 변환합니다.
+ * 웹툰 스트립 형식: 모든 패널을 하나의 세로 스트립에 쌓기
  */
 export function buildPageDataFromPanels(
   panels: Array<{
@@ -146,50 +147,55 @@ export function buildPageDataFromPanels(
   episodeNumber: number = 1,
   stripWidth: number = DEFAULT_STRIP_WIDTH
 ): PageData[] {
-  return panels.map((panel, i) => {
+  // 모든 패널을 하나의 페이지에 세로로 배치
+  const totalHeight = panels.length * DEFAULT_PANEL_HEIGHT;
+
+  const images: ImageData[] = panels.map((panel, i) => ({
+    id: `panel_img_${panel.index}`,
+    pageIndex: 0,
+    storageUrl: panel.imageUrl,
+    bounds: { x: 0, y: i * DEFAULT_PANEL_HEIGHT, w: stripWidth, h: DEFAULT_PANEL_HEIGHT },
+  }));
+
+  const bubbles: BubbleData[] = [];
+  for (const panel of panels) {
     const panelDialogues = dialogueHints.filter(d => d.panelIndex === panel.index);
+    const panelY = panels.indexOf(panel) * DEFAULT_PANEL_HEIGHT;
 
-    // 이미지 데이터
-    const image: ImageData = {
-      id: `panel_img_${panel.index}`,
-      pageIndex: i,
-      storageUrl: panel.imageUrl,
-      bounds: { x: 0, y: 0, w: stripWidth, h: DEFAULT_PANEL_HEIGHT },
-    };
+    panelDialogues.forEach((d, di) => {
+      bubbles.push({
+        id: `bubble_${panel.index}_${di}`,
+        type: "dialogue" as const,
+        text: `${d.character}: ${d.text}`,
+        position: {
+          x: stripWidth * 0.1 + (di % 2) * stripWidth * 0.4,
+          y: panelY + DEFAULT_PANEL_HEIGHT * 0.6 + di * 80,
+        },
+        size: { w: 280, h: 60 },
+        style: {
+          fontSize: 16,
+          fontFamily: "Pretendard",
+          color: "#000000",
+          bgColor: "#FFFFFF",
+          borderColor: "#000000",
+          borderWidth: 2,
+          radius: 20,
+        },
+        bubbleStyle: "speech" as const,
+        pageIndex: 0,
+        objectIndex: bubbles.length,
+      });
+    });
+  }
 
-    // 대사 → BubbleData 변환
-    const bubbles: BubbleData[] = panelDialogues.map((d, di) => ({
-      id: `bubble_${panel.index}_${di}`,
-      type: "dialogue" as const,
-      text: `${d.character}: ${d.text}`,
-      position: {
-        x: stripWidth * 0.1 + (di % 2) * stripWidth * 0.4,
-        y: DEFAULT_PANEL_HEIGHT * 0.6 + di * 80,
-      },
-      size: { w: 280, h: 60 },
-      style: {
-        fontSize: 16,
-        fontFamily: "Pretendard",
-        color: "#000000",
-        bgColor: "#FFFFFF",
-        borderColor: "#000000",
-        borderWidth: 2,
-        radius: 20,
-      },
-      bubbleStyle: "speech" as const,
-      pageIndex: i,
-      objectIndex: di,
-    }));
-
-    return {
-      pageIndex: i,
-      episodeNum: episodeNumber,
-      image,
-      images: [image],
-      bubbles,
-      pageSize: { w: stripWidth, h: DEFAULT_PANEL_HEIGHT },
-    };
-  });
+  return [{
+    pageIndex: 0,
+    episodeNum: episodeNumber,
+    image: images[0],
+    images,
+    bubbles,
+    pageSize: { w: stripWidth, h: totalHeight },
+  }];
 }
 
 // ─── Figma 연결 상태 리스너 ─────────────────────────────────
