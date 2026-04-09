@@ -40,13 +40,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       body.image = image;
     }
 
-    console.log(`[NinjaChat Proxy] model=${body.model}, has_ref=${!!image}`);
+    const keyPrefix = typeof apiKey === "string" ? apiKey.substring(0, 8) : "??";
+    console.log(`[NinjaChat Proxy] model=${body.model}, has_ref=${!!image}, key=${keyPrefix}...`);
 
     const upstream = await fetch(NINJACHAT_API_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${apiKey}`,
+        "X-API-Key": `${apiKey}`,
       },
       body: JSON.stringify(body),
     });
