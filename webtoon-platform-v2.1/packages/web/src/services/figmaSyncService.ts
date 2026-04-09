@@ -130,12 +130,53 @@ export async function figmaBatchSync(
 
 // ─── 패널 데이터 → PageData 변환 유틸 ──────────────────────
 
-const DEFAULT_STRIP_WIDTH = 800;
-const DEFAULT_PANEL_HEIGHT = 1067; // 4:3 portrait (800 * 4/3)
+const DEFAULT_STRIP_WIDTH = 720;
+const DEFAULT_PANEL_HEIGHT = 960; // 720 * 4/3
+const PANEL_GAP = 200; // 패널 사이 간격
+
+// ── 말풍선 SVG Path 생성 (video-prompt-engine 호환) ──
+function makeSpeechBubbleSvgPath(w: number, h: number, tailSide: "left" | "right" = "left") {
+  // 둥근 사각형 + 꼬리(tail) 말풍선
+  const r = Math.min(w, h) * 0.25; // 모서리 반경
+  const bodyH = h * 0.82; // 본체 높이 (꼬리 공간 확보)
+  const tailW = w * 0.12;
+  const tailH = h - bodyH;
+  const tailX = tailSide === "left" ? w * 0.2 : w * 0.65;
+
+  const pathD = [
+    `M ${r} 0`,
+    `H ${w - r}`,
+    `Q ${w} 0 ${w} ${r}`,
+    `V ${bodyH - r}`,
+    `Q ${w} ${bodyH} ${w - r} ${bodyH}`,
+    // 꼬리 오른쪽
+    `H ${tailX + tailW}`,
+    `L ${tailX + tailW * 0.3} ${bodyH + tailH}`,
+    `L ${tailX} ${bodyH}`,
+    // 왼쪽으로
+    `H ${r}`,
+    `Q 0 ${bodyH} 0 ${bodyH - r}`,
+    `V ${r}`,
+    `Q 0 0 ${r} 0`,
+    `Z`,
+  ].join(" ");
+
+  return {
+    pathD,
+    viewBox: `0 0 ${w} ${h}`,
+    vbX: 0,
+    vbY: 0,
+    vbW: w,
+    vbH: h,
+    fillColor: "#FFFFFF",
+    strokeColor: "#333333",
+    strokeWidth: 2.5,
+  };
+}
 
 /**
  * 생성된 패널 이미지와 대사를 단일 페이지 PageData[]로 변환합니다.
- * 웹툰 스트립 형식: 모든 패널을 하나의 세로 스트립에 쌓기
+ * 웹툰 스트립 형식: 모든 패널을 하나의 세로 스트립에 쌓기 (패널 간 200px 간격)
  */
 export function buildPageDataFromPanels(
   panels: Array<{
@@ -147,44 +188,51 @@ export function buildPageDataFromPanels(
   episodeNumber: number = 1,
   stripWidth: number = DEFAULT_STRIP_WIDTH
 ): PageData[] {
-  // 모든 패널을 하나의 페이지에 세로로 배치
-  const totalHeight = panels.length * DEFAULT_PANEL_HEIGHT;
+  // 패널 높이 = stripWidth * 4/3
+  const panelH = Math.round(stripWidth * 4 / 3);
+  // 전체 높이 = (패널 높이 + 간격) × 패널 수 - 마지막 간격
+  const totalHeight = panels.length * panelH + Math.max(0, panels.length - 1) * PANEL_GAP;
 
   const images: ImageData[] = panels.map((panel, i) => ({
     id: `panel_img_${panel.index}`,
     pageIndex: 0,
     storageUrl: panel.imageUrl,
-    bounds: { x: 0, y: i * DEFAULT_PANEL_HEIGHT, w: stripWidth, h: DEFAULT_PANEL_HEIGHT },
+    bounds: { x: 0, y: i * (panelH + PANEL_GAP), w: stripWidth, h: panelH },
   }));
 
   const bubbles: BubbleData[] = [];
-  for (const panel of panels) {
+  for (let pi = 0; pi < panels.length; pi++) {
+    const panel = panels[pi];
     const panelDialogues = dialogueHints.filter(d => d.panelIndex === panel.index);
-    const panelY = panels.indexOf(panel) * DEFAULT_PANEL_HEIGHT;
+    const panelY = pi * (panelH + PANEL_GAP);
 
     panelDialogues.forEach((d, di) => {
+      const bw = 240;
+      const bh = 80;
+      const isLeft = di % 2 === 0;
+      const bx = isLeft ? stripWidth * 0.06 : stripWidth * 0.52;
+      const by = panelY + panelH * 0.55 + di * 90;
+
       bubbles.push({
         id: `bubble_${panel.index}_${di}`,
         type: "dialogue" as const,
         text: `${d.character}: ${d.text}`,
-        position: {
-          x: stripWidth * 0.1 + (di % 2) * stripWidth * 0.4,
-          y: panelY + DEFAULT_PANEL_HEIGHT * 0.6 + di * 80,
-        },
-        size: { w: 280, h: 60 },
+        position: { x: bx, y: by },
+        size: { w: bw, h: bh },
+        svgPath: makeSpeechBubbleSvgPath(bw, bh, isLeft ? "left" : "right"),
         style: {
-          fontSize: 16,
+          fontSize: 14,
           fontFamily: "Pretendard",
           color: "#000000",
           bgColor: "#FFFFFF",
-          borderColor: "#000000",
-          borderWidth: 2,
+          borderColor: "#333333",
+          borderWidth: 2.5,
           radius: 20,
         },
         bubbleStyle: "speech" as const,
         pageIndex: 0,
         objectIndex: bubbles.length,
-      });
+      } as any);
     });
   }
 

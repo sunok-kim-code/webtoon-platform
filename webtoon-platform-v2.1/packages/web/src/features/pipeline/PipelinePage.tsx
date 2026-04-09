@@ -2852,7 +2852,7 @@ export function PipelinePage() {
                       .sort((a, b) => a.index - b.index);
 
                     const epNum = parseInt(episodeId.replace(/\D/g, "") || "1");
-                    const pages = buildPageDataFromPanels(panelList, dialogueHints, epNum, 800);
+                    const pages = buildPageDataFromPanels(panelList, dialogueHints, epNum, 720);
 
                     await figmaBatchSync(projectId, pages as any);
                     setFigmaExportResult(`Figma로 ${panelList.length}개 패널 전송 완료! 플러그인에서 확인하세요.`);
