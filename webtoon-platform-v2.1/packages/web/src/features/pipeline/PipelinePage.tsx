@@ -1426,6 +1426,7 @@ export function PipelinePage() {
 
     try {
       const result = await generateImage(prompt, {
+        modelId: selectedModel,
         imageSize: "portrait_4_3",
         onProgress: (state: KieTaskState, elapsed: number) => {
           setGenProgress(prev => ({ ...prev, [idx]: `${stateLabels[state] || state} (${elapsed}초)` }));

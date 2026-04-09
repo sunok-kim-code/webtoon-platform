@@ -65,7 +65,8 @@ export function SettingsPage() {
 
   const handleImageModelChange = (modelId: string) => {
     setSelectedImageModelState(modelId);
-    setSelectedImageModel(modelId);
+    // 설정 페이지에서는 localStorage에 저장하지 않음
+    // Pipeline 페이지의 드롭다운에서 선택한 값만 실제 생성에 영향을 미침
   };
 
   const handleModelChange = (modelId: GeminiModelId) => {
