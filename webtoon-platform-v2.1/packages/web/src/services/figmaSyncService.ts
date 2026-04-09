@@ -303,7 +303,7 @@ export function buildPageDataFromPanels(
     });
 
     // ── 2. SFX (패널 내부) ──
-    const panelSfx: string[] = panel.sfx || [];
+    const panelSfx: string[] = (panel.sfx || []).map(s => s.replace(/\s*\([^)]*\)/g, "").trim()).filter(s => s.length > 0);
     panelSfx.forEach((sfxText, si) => {
       const sw = 180;
       const sh = 60;
