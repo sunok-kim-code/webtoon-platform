@@ -1041,17 +1041,6 @@ export async function getTaskDetail(taskId: string): Promise<KieTaskDetail> {
   };
 }
 
-// ─── NSFW 필터 회피를 위한 프롬프트 순화 ────────────────────
-
-/**
- * KIE API의 NSFW 필터에 걸릴 수 있는 표현을 순화합니다.
- * 신체 묘사, 의상 관련 민감 표현을 웹툰 캐릭터 디자인용으로 변환합니다.
- */
-/** NSFW 순화 비활성화 — 이미지 모델이 자체 NSFW 필터를 가지고 있으므로 원본 프롬프트를 그대로 전달 */
-function sanitizePromptForNSFW(prompt: string): string {
-  return prompt;
-}
-
 // ─── 이미지 생성 (통합: create + poll) ─────────────────────
 
 export interface GenerateImageResult {
@@ -1248,11 +1237,6 @@ export async function generateImage(
 ): Promise<GenerateImageResult> {
   const modelId = options?.modelId || getSelectedImageModel();
   const rawSize = options?.imageSize || "portrait_4_3";
-  // NSFW 필터 회피를 위해 프롬프트 순화
-  const sanitizedPrompt = sanitizePromptForNSFW(prompt);
-  if (sanitizedPrompt !== prompt) {
-    console.log("[KieImage] 프롬프트 NSFW 순화 적용됨");
-  }
 
   let lastError: Error | null = null;
 
@@ -1263,7 +1247,7 @@ export async function generateImage(
         options?.onProgress?.("waiting", 0);
         await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
       }
-      return await generateImageOnce(sanitizedPrompt, modelId, rawSize, {
+      return await generateImageOnce(prompt, modelId, rawSize, {
         onProgress: options?.onProgress,
         referenceImageUrls: options?.referenceImageUrls,
       });
@@ -1443,7 +1427,7 @@ async function buildBatchJsonl(panels: BatchPanelRequest[]): Promise<string> {
 
   for (const panel of panels) {
     const refParts = await buildRefParts(panel.referenceImageUrls);
-    const prompt = sanitizePromptForNSFW(panel.prompt);
+    const prompt = panel.prompt;
 
     const textPart = refParts.length > 0
       ? { text: `Use the above reference images as style and character reference. Generate a new image based on the following description:\n\n${prompt}` }
