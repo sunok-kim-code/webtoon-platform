@@ -32,6 +32,7 @@ import { applyPromptRules, type PanelPromptContext, type SubjectInfo } from "@/s
 import {
   figmaSyncFullEpisode,
   figmaBatchSync,
+  buildPageDataFromPanels,
   listenFigmaStatus,
   extractDialogueHints,
   type FigmaSyncStatus,
@@ -2834,7 +2835,7 @@ export function PipelinePage() {
                     await figmaBatchSync(projectId, pages as any);
                     setFigmaExportResult(`Figma로 ${pages.length}개 패널 + ${Object.values(v1BubblesByPanel).flat().length}개 말풍선 전송 완료! 플러그인에서 확인하세요.`);
                   } else {
-                    // ── v2.1 IMPORT_EPISODE 방식 ──
+                    // ── BATCH_SYNC 방식 (v1/v2 플러그인 모두 호환) ──
                     const panelDescs = editingPanels.map((p, i) => ({
                       index: i,
                       description: p.description,
@@ -2842,40 +2843,19 @@ export function PipelinePage() {
                     }));
                     const dialogueHints = extractDialogueHints(sceneText, panelDescs);
 
-                    const sceneBreaks: number[] = [];
-                    for (let i = 1; i < editingPanels.length; i++) {
-                      const prev = editingPanels[i - 1];
-                      const curr = editingPanels[i];
-                      const prevChars = new Set(prev.characters);
-                      const currChars = new Set(curr.characters);
-                      const intersection = [...prevChars].filter(c => currChars.has(c));
-                      const union = new Set([...prevChars, ...currChars]).size;
-                      if (union > 0 && intersection.length / union < 0.5) {
-                        sceneBreaks.push(i);
-                      }
-                    }
-
-                    const manifestPanels = Object.entries(generatedImages)
+                    const panelList = Object.entries(generatedImages)
                       .map(([idx, url]) => ({
                         index: parseInt(idx),
                         imageUrl: url,
-                        width: 800,
-                        height: 1067,
-                        prompt: panelPrompts[parseInt(idx)] || editingPanels[parseInt(idx)]?.description,
+                        description: panelPrompts[parseInt(idx)] || editingPanels[parseInt(idx)]?.description || "",
                       }))
                       .sort((a, b) => a.index - b.index);
 
-                    await figmaSyncFullEpisode(
-                      projectId,
-                      episodeId,
-                      1,
-                      analysis.sceneOverview || "Episode",
-                      manifestPanels,
-                      dialogueHints,
-                      sceneBreaks
-                    );
+                    const epNum = parseInt(episodeId.replace(/\D/g, "") || "1");
+                    const pages = buildPageDataFromPanels(panelList, dialogueHints, epNum, 800);
 
-                    setFigmaExportResult(`Figma로 ${manifestPanels.length}개 패널 전송 완료! 플러그인에서 확인하세요.`);
+                    await figmaBatchSync(projectId, pages as any);
+                    setFigmaExportResult(`Figma로 ${panelList.length}개 패널 전송 완료! 플러그인에서 확인하세요.`);
                   }
                 } catch (err: any) {
                   console.error("[FigmaExport] Error:", err);
