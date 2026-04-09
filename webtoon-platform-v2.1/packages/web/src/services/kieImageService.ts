@@ -780,28 +780,15 @@ async function callXaiGrokImage(
 
   const aspectRatio = XAI_GROK_RATIO[sizeKey] || "3:4";
 
-  // 레퍼런스 이미지가 있으면 edits 엔드포인트 사용
-  const hasRefs = referenceImageUrls && referenceImageUrls.length > 0;
-  const url = hasRefs
-    ? "https://api.x.ai/v1/images/edits"
-    : "https://api.x.ai/v1/images/generations";
+  // 항상 generations 엔드포인트 사용 (edits는 multipart 필요)
+  const url = "https://api.x.ai/v1/images/generations";
 
   const body: Record<string, unknown> = {
-    model: hasRefs ? "grok-imagine-image" : "grok-imagine-image-pro",
+    model: "grok-2-image",
     prompt: prompt.substring(0, 4000),
     n: 1,
     response_format: "b64_json",
-    aspect_ratio: aspectRatio,
   };
-
-  // 레퍼런스 이미지 첨부
-  if (hasRefs) {
-    if (referenceImageUrls!.length === 1) {
-      body.image = { url: referenceImageUrls![0], type: "image_url" };
-    } else {
-      body.images = referenceImageUrls!.slice(0, 4).map(img => ({ url: img, type: "image_url" }));
-    }
-  }
 
   const maxRetries = 3;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
