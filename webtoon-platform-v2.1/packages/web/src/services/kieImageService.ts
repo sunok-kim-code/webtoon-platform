@@ -249,13 +249,13 @@ export const KIE_IMAGE_MODELS: KieImageModel[] = [
   },
   // ── NinjaChat (프록시 호출) ──
   {
-    id: "ninjachat/imagen4",
-    name: "NinjaChat Imagen4",
+    id: "ninjachat/vision1",
+    name: "NinjaChat Vision1",
     category: "ninjachat",
-    mode: "text2img",
-    description: "NinjaChat Google Imagen 4 이미지 생성 (API 키 필요, $0.08/장)",
+    mode: "img2img",
+    description: "NinjaChat Ninja-Vision-1 이미지 생성 (API 키 필요, 레퍼런스 지원)",
     supportedSizes: ["square_hd", "portrait_4_3", "portrait_16_9"],
-    defaultSize: "square_hd",
+    defaultSize: "portrait_4_3",
   },
 ];
 
@@ -843,12 +843,13 @@ async function callNinjaChatImage(
   const apiKey = localStorage.getItem("NINJACHAT_API_KEY") || "";
   if (!apiKey) throw new Error("NinjaChat API 키가 필요합니다. 설정에서 NINJACHAT_API_KEY를 입력하세요.");
 
-  // NinjaChat API: POST https://ninjachat.ai/api/v1/images
-  // 파라미터: prompt, model, image (옵션)
+  // NinjaChat API: POST https://www.ninjachat.ai/api/v1/images
+  // 파라미터: prompt, model, size, image (옵션)
   // 응답: { images: [{ url: "..." }] }
   const body: Record<string, unknown> = {
     prompt: prompt.substring(0, 4000),
-    model: "google-imagen-4",
+    model: "ninja-vision-1",
+    size: "2560x1440",
     _apiKey: apiKey,
   };
 
@@ -857,7 +858,7 @@ async function callNinjaChatImage(
     body.image = referenceImageUrls[0];
   }
 
-  console.log(`[NinjaChat] Model: google-imagen-4, has_ref: ${!!body.image}`);
+  console.log(`[NinjaChat] Model: ninja-vision-1, size: 2560x1440, has_ref: ${!!body.image}`);
 
   const maxRetries = 3;
   for (let attempt = 0; attempt < maxRetries; attempt++) {

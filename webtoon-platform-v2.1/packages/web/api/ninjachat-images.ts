@@ -22,7 +22,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { prompt, model, image, _apiKey } = req.body || {};
+    const { prompt, model, size, image, _apiKey } = req.body || {};
 
     // API 키: 요청 본문의 _apiKey 또는 헤더의 X-Api-Key
     const apiKey = _apiKey || req.headers["x-api-key"];
@@ -32,8 +32,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const body: Record<string, unknown> = {
       prompt: (prompt || "").substring(0, 4000),
-      model: model || "google-imagen-4",
+      model: model || "ninja-vision-1",
     };
+
+    // 사이즈 (e.g. "2560x1440")
+    if (size) {
+      body.size = size;
+    }
 
     // 레퍼런스 이미지 (image-to-image)
     if (image) {
@@ -41,7 +46,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const keyPrefix = typeof apiKey === "string" ? apiKey.substring(0, 8) : "??";
-    console.log(`[NinjaChat Proxy] model=${body.model}, has_ref=${!!image}, key=${keyPrefix}...`);
+    console.log(`[NinjaChat Proxy] model=${body.model}, size=${body.size || "default"}, has_ref=${!!image}, key=${keyPrefix}...`);
 
     const upstream = await fetch(NINJACHAT_API_URL, {
       method: "POST",
