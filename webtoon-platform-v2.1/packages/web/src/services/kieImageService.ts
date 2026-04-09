@@ -1256,7 +1256,8 @@ export async function generateImage(
       const msg = err?.message || "";
       // NSFW 등 콘텐츠 필터 에러는 재시도 불가
       const isContentFilter = msg.includes("NSFW") || msg.includes("content detected")
-        || msg.includes("Content detected") || msg.includes("safety") || msg.includes("blocked");
+        || msg.includes("Content detected") || msg.includes("safety") || msg.includes("blocked")
+        || msg.includes("content moderation") || msg.includes("moderation");
       if (isContentFilter) {
         console.warn("[KieImage] 콘텐츠 필터 차단 — 재시도 불가:", msg);
         throw err;
