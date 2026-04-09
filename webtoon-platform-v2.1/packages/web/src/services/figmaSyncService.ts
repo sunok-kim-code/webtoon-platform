@@ -255,22 +255,22 @@ export function buildPageDataFromPanels(
     const panelH = panelHeights[pi];
 
     // ── 1. 대사 말풍선 (패널 내부) ──
-    // 패널별 인라인 dialogues 우선, 없으면 dialogueHints 폴백
+    // 패널 인라인 dialogues만 사용 (dialogueHints 폴백 제거 — 이중 출력 방지)
     const rawDialogues: Array<{ character: string; text: string }> =
       panel.dialogues && panel.dialogues.length > 0
         ? panel.dialogues
-        : dialogueHints
-            .filter(d => d.panelIndex === panel.index)
-            .map(d => ({ character: d.character, text: d.text }));
+        : [];
 
     // 중복 대사 제거 (같은 텍스트가 2번 이상 나오면 첫 번째만 유지)
     const seen = new Set<string>();
     const panelDialogues = rawDialogues.filter(d => {
       const key = d.text.trim();
+      if (!key) return false;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
+    console.log(`[FigmaExport] Panel ${panel.index}: inline dialogues=${panel.dialogues?.length || 0}, after dedup=${panelDialogues.length}`);
 
     // 꼬리 왼쪽 (원본)
     const BUBBLE_PATH_TAIL_LEFT = "M104.425 1.75781C31.0913 1.75781 1.75793 60.0132 1.75793 131.214C1.75793 189.47 21.9246 239.095 54.0079 256.356C49.4246 275.774 35.6746 303.823 14.5913 318.926C40.2579 308.138 56.7579 286.562 65.9246 269.301C76.9246 275.774 89.7579 277.932 104.425 277.932C177.758 277.932 207.091 211.046 207.091 131.214C207.091 60.0132 177.758 1.75781 104.425 1.75781Z";
