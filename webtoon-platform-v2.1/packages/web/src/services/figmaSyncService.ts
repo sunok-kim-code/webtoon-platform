@@ -310,10 +310,10 @@ export function buildPageDataFromPanels(
         position: { x: sx, y: sy },
         size: { w: sw, h: sh },
         style: {
-          fontSize: 22,
+          fontSize: 30,
           fontFamily: "Nanum Brush Script",
           fontWeight: 900,
-          color: "#FF0000",
+          color: "#000000",
           rotation: isLeft ? -8 : 8,
           opacity: 0.95,
         },
