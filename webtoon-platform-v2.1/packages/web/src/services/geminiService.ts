@@ -546,6 +546,10 @@ ${charContext}${locContext}${outfitContext}
     - "horror" → "unease", "cold sweat" → "a tired, weary look"
     - "agony" → "weariness", "panic" → "restless unease"
 
+규칙 F: 금지 단어 (Banned Words)
+  - "silhouette", "실루엣" 단어를 aiPrompt에 절대 사용하지 말 것.
+  - 역광이나 어두운 윤곽 묘사가 필요하면 "dimly lit figure", "figure seen from behind in soft light" 등 다른 표현으로 대체하라.
+
 [프롬프트 작성 공식 — 이 순서대로 aiPrompt를 작성하라]
 1. [통합 스타일]: 인물과 배경에 동일한 채색 기법. 혼합 렌더링 금지.
 2. [구도]: Full shot / Wide shot 기본. 환경에 맞는 정확한 비율.

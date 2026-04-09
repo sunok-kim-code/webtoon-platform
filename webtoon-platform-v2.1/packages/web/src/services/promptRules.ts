@@ -174,12 +174,15 @@ export const ACTION_SOFTENER: Record<string, string> = {
   "cold sweat": "a tired, weary look",
   "tense shoulders": "subtle anxiety in the posture",
   "body leaning backward": "slightly pulling back",
+  "silhouette": "dimly lit figure",
+  "silhouetted": "dimly lit",
   // 한국어
   "꽉 쥐다": "주름진 시트에 손을 얹다",
   "뒤척이다": "머리카락이 흐트러진 채 누워 있다",
   "눈을 크게 뜨다": "멍하니 응시하다",
   "식은땀": "지친 기색",
   "경직된 어깨": "자세에 깃든 미묘한 불안함",
+  "실루엣": "어둑한 인물",
 };
 
 // ─── 규칙5: 감정의 담백한 묘사 (Subtle Emotion) ────────────
