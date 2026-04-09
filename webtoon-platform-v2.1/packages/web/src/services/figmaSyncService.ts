@@ -132,32 +132,52 @@ export async function figmaBatchSync(
 
 const DEFAULT_STRIP_WIDTH = 720;
 const DEFAULT_PANEL_HEIGHT = 960; // 720 * 4/3
-const PANEL_GAP = 200; // 패널 사이 간격
+const PANEL_GAP = 400; // 패널 사이 간격
 
-// ── 말풍선 SVG Path 생성 (video-prompt-engine 호환) ──
+// ── 말풍선 SVG Path 생성 (video-prompt-engine 호환: 타원 + 꼬리) ──
 function makeSpeechBubbleSvgPath(w: number, h: number, tailSide: "left" | "right" = "left") {
-  // 둥근 사각형 + 꼬리(tail) 말풍선
-  const r = Math.min(w, h) * 0.25; // 모서리 반경
+  // 타원형 말풍선 (buildBubblePath 호환, roundness=100)
   const bodyH = h * 0.82; // 본체 높이 (꼬리 공간 확보)
-  const tailW = w * 0.12;
+  const rx = w / 2;
+  const ry = bodyH / 2;
+  const cx = w / 2;
+  const cy = bodyH / 2;
+
+  // 타원 코너 반경 = min(rx, ry) → 완전한 타원
+  const cr = Math.min(rx, ry);
+  const crx = cr;
+  const cry = cr;
+  const k = 0.5523; // 베지어 원 근사 상수
+
+  const L = cx - rx;
+  const R = cx + rx;
+  const T = cy - ry;
+  const B = cy + ry;
+
+  // 꼬리 위치/크기
+  const tailW = w * 0.1;
   const tailH = h - bodyH;
-  const tailX = tailSide === "left" ? w * 0.2 : w * 0.65;
+  const tailCx = tailSide === "left" ? cx - rx * 0.3 : cx + rx * 0.3;
+  const tLeft = tailCx - tailW / 2;
+  const tRight = tailCx + tailW / 2;
+  const tipX = tailSide === "left" ? tailCx - tailW * 0.5 : tailCx + tailW * 0.5;
+  const tipY = B + tailH;
 
   const pathD = [
-    `M ${r} 0`,
-    `H ${w - r}`,
-    `Q ${w} 0 ${w} ${r}`,
-    `V ${bodyH - r}`,
-    `Q ${w} ${bodyH} ${w - r} ${bodyH}`,
-    // 꼬리 오른쪽
-    `H ${tailX + tailW}`,
-    `L ${tailX + tailW * 0.3} ${bodyH + tailH}`,
-    `L ${tailX} ${bodyH}`,
-    // 왼쪽으로
-    `H ${r}`,
-    `Q 0 ${bodyH} 0 ${bodyH - r}`,
-    `V ${r}`,
-    `Q 0 0 ${r} 0`,
+    `M ${L + crx} ${T}`,
+    `L ${R - crx} ${T}`,
+    `C ${R - crx + crx * k} ${T} ${R} ${T + cry - cry * k} ${R} ${T + cry}`,
+    `L ${R} ${B - cry}`,
+    `C ${R} ${B - cry + cry * k} ${R - crx + crx * k} ${B} ${R - crx} ${B}`,
+    // → 꼬리 오른쪽 접합점
+    `L ${tRight} ${B}`,
+    `L ${tipX} ${tipY}`,
+    `L ${tLeft} ${B}`,
+    // ← 왼쪽으로
+    `L ${L + crx} ${B}`,
+    `C ${L + crx - crx * k} ${B} ${L} ${B - cry + cry * k} ${L} ${B - cry}`,
+    `L ${L} ${T + cry}`,
+    `C ${L} ${T + cry - cry * k} ${L + crx - crx * k} ${T} ${L + crx} ${T}`,
     `Z`,
   ].join(" ");
 
@@ -176,41 +196,79 @@ function makeSpeechBubbleSvgPath(w: number, h: number, tailSide: "left" | "right
 
 /**
  * 생성된 패널 이미지와 대사를 단일 페이지 PageData[]로 변환합니다.
- * 웹툰 스트립 형식: 모든 패널을 하나의 세로 스트립에 쌓기 (패널 간 200px 간격)
+ * 웹툰 스트립 형식: 모든 패널을 하나의 세로 스트립에 쌓기 (패널 간 400px 간격)
+ *
+ * - 패널 높이: 원본 이미지 비율 기반 동적 계산 (origWidth/origHeight 제공 시)
+ * - 말풍선: 각 패널 영역 내에 배치
+ * - 나레이션: 패널 사이 400px 간격에 배치
+ * - SFX: 각 패널 영역 내에 배치
  */
 export function buildPageDataFromPanels(
   panels: Array<{
     index: number;
     imageUrl: string;
     description: string;
+    origWidth?: number;
+    origHeight?: number;
+    dialogues?: Array<{ character: string; text: string }>;
+    sfx?: string[];
+    narration?: string;
   }>,
   dialogueHints: DialogueHint[],
   episodeNumber: number = 1,
   stripWidth: number = DEFAULT_STRIP_WIDTH
 ): PageData[] {
-  // 패널 높이 = stripWidth * 4/3
-  const panelH = Math.round(stripWidth * 4 / 3);
-  // 전체 높이 = (패널 높이 + 간격) × 패널 수 - 마지막 간격
-  const totalHeight = panels.length * panelH + Math.max(0, panels.length - 1) * PANEL_GAP;
+  // ── 각 패널의 높이를 원본 비율 기반으로 계산 ──
+  const panelHeights: number[] = panels.map(p => {
+    if (p.origWidth && p.origHeight && p.origWidth > 0) {
+      return Math.round(stripWidth * (p.origHeight / p.origWidth));
+    }
+    return DEFAULT_PANEL_HEIGHT; // 폴백: 4:3
+  });
 
+  // ── 각 패널의 Y 오프셋 계산 (패널 간 400px 간격) ──
+  const panelYOffsets: number[] = [];
+  let currentY = 0;
+  for (let i = 0; i < panels.length; i++) {
+    panelYOffsets.push(currentY);
+    currentY += panelHeights[i] + PANEL_GAP;
+  }
+  // 전체 높이 = 마지막 패널 끝
+  const totalHeight = panels.length > 0
+    ? panelYOffsets[panels.length - 1] + panelHeights[panels.length - 1]
+    : 0;
+
+  // ── 이미지 배치 ──
   const images: ImageData[] = panels.map((panel, i) => ({
     id: `panel_img_${panel.index}`,
     pageIndex: 0,
     storageUrl: panel.imageUrl,
-    bounds: { x: 0, y: i * (panelH + PANEL_GAP), w: stripWidth, h: panelH },
+    bounds: { x: 0, y: panelYOffsets[i], w: stripWidth, h: panelHeights[i] },
   }));
 
+  // ── 버블 배치 ──
   const bubbles: BubbleData[] = [];
+
   for (let pi = 0; pi < panels.length; pi++) {
     const panel = panels[pi];
-    const panelDialogues = dialogueHints.filter(d => d.panelIndex === panel.index);
-    const panelY = pi * (panelH + PANEL_GAP);
+    const panelY = panelYOffsets[pi];
+    const panelH = panelHeights[pi];
+
+    // ── 1. 대사 말풍선 (패널 내부) ──
+    // 패널별 인라인 dialogues 우선, 없으면 dialogueHints 폴백
+    const panelDialogues: Array<{ character: string; text: string }> =
+      panel.dialogues && panel.dialogues.length > 0
+        ? panel.dialogues
+        : dialogueHints
+            .filter(d => d.panelIndex === panel.index)
+            .map(d => ({ character: d.character, text: d.text }));
 
     panelDialogues.forEach((d, di) => {
       const bw = 240;
       const bh = 80;
       const isLeft = di % 2 === 0;
       const bx = isLeft ? stripWidth * 0.06 : stripWidth * 0.52;
+      // 패널 하단 55%~에서 시작, 패널 높이에 비례
       const by = panelY + panelH * 0.55 + di * 90;
 
       bubbles.push({
@@ -219,22 +277,116 @@ export function buildPageDataFromPanels(
         text: `${d.character}: ${d.text}`,
         position: { x: bx, y: by },
         size: { w: bw, h: bh },
-        svgPath: makeSpeechBubbleSvgPath(bw, bh, isLeft ? "left" : "right"),
+        // svgPath 없이 isEllipse: true → 플러그인이 네이티브 Figma 타원 생성
         style: {
-          fontSize: 14,
+          fontSize: 25,
           fontFamily: "Pretendard",
           color: "#000000",
           bgColor: "#FFFFFF",
           borderColor: "#333333",
           borderWidth: 2.5,
-          radius: 20,
+          isEllipse: true,
         },
         bubbleStyle: "speech" as const,
         pageIndex: 0,
         objectIndex: bubbles.length,
       } as any);
     });
+
+    // ── 2. SFX (패널 내부) ──
+    const panelSfx: string[] = panel.sfx || [];
+    panelSfx.forEach((sfxText, si) => {
+      const sw = 180;
+      const sh = 60;
+      // SFX를 패널 상단 20~40% 영역에 배치, 좌우 교대
+      const isLeft = si % 2 === 0;
+      const sx = isLeft ? stripWidth * 0.08 : stripWidth * 0.55;
+      const sy = panelY + panelH * 0.15 + si * 80;
+
+      bubbles.push({
+        id: `sfx_${panel.index}_${si}`,
+        type: "sfx" as const,
+        text: sfxText,
+        position: { x: sx, y: sy },
+        size: { w: sw, h: sh },
+        style: {
+          fontSize: 22,
+          fontFamily: "Nanum Brush Script",
+          fontWeight: 900,
+          color: "#FF0000",
+          rotation: isLeft ? -8 : 8,
+          opacity: 0.95,
+        },
+        bubbleStyle: "text" as const,
+        pageIndex: 0,
+        objectIndex: bubbles.length,
+      } as any);
+    });
+
+    // ── 3. 나레이션 (패널 사이 간격에 배치) ──
+    // 나레이션은 이 패널 아래 ~ 다음 패널 시작 사이의 400px 간격 가운데에 배치
+    const narrationText = panel.narration;
+    if (narrationText && narrationText.trim().length > 0 && pi < panels.length - 1) {
+      const nw = stripWidth * 0.8;
+      const nh = 60;
+      const gapStart = panelY + panelH; // 패널 끝
+      const nx = (stripWidth - nw) / 2;
+      const ny = gapStart + (PANEL_GAP - nh) / 2; // 간격 중앙
+
+      bubbles.push({
+        id: `narration_${panel.index}`,
+        type: "narration" as const,
+        text: narrationText,
+        position: { x: nx, y: ny },
+        size: { w: nw, h: nh },
+        style: {
+          fontSize: 25,
+          fontFamily: "Pretendard",
+          color: "#333333",
+          bgColor: "transparent",
+          borderWidth: 0,
+          radius: 4,
+          isBox: true,
+        },
+        bubbleStyle: "narration" as const,
+        pageIndex: 0,
+        objectIndex: bubbles.length,
+      } as any);
+    }
+    // 마지막 패널의 나레이션은 패널 아래에 배치
+    if (narrationText && narrationText.trim().length > 0 && pi === panels.length - 1) {
+      const nw = stripWidth * 0.8;
+      const nh = 60;
+      const nx = (stripWidth - nw) / 2;
+      const ny = panelY + panelH + 40;
+
+      bubbles.push({
+        id: `narration_${panel.index}`,
+        type: "narration" as const,
+        text: narrationText,
+        position: { x: nx, y: ny },
+        size: { w: nw, h: nh },
+        style: {
+          fontSize: 25,
+          fontFamily: "Pretendard",
+          color: "#333333",
+          bgColor: "transparent",
+          borderWidth: 0,
+          radius: 4,
+          isBox: true,
+        },
+        bubbleStyle: "narration" as const,
+        pageIndex: 0,
+        objectIndex: bubbles.length,
+      } as any);
+    }
   }
+
+  // 마지막 패널 나레이션 포함 시 높이 확장
+  const lastPanel = panels[panels.length - 1];
+  const finalHeight = lastPanel?.narration?.trim()
+    ? totalHeight + 120  // 나레이션 공간 추가
+    : totalHeight;
 
   return [{
     pageIndex: 0,
@@ -242,7 +394,7 @@ export function buildPageDataFromPanels(
     image: images[0],
     images,
     bubbles,
-    pageSize: { w: stripWidth, h: totalHeight },
+    pageSize: { w: stripWidth, h: finalHeight },
   }];
 }
 
@@ -272,9 +424,22 @@ export function listenFigmaStatus(
       unsubscribe = onSnapshot(statusRef, (snap) => {
         if (snap.exists()) {
           const data = snap.data();
+          // video-prompt-engine 플러그인: pluginActive + lastHeartbeat
+          // webtoon-platform 플러그인: connected + lastSyncAt
+          const isConnected = data.connected === true || data.pluginActive === true;
+
+          // lastSyncAt 또는 lastHeartbeat (Firestore Timestamp → ms 변환)
+          let syncTime = data.lastSyncAt ?? 0;
+          if (!syncTime && data.lastHeartbeat) {
+            syncTime = data.lastHeartbeat.toMillis ? data.lastHeartbeat.toMillis() : (data.lastHeartbeat ?? 0);
+          }
+
+          // heartbeat가 30초 이상 지나면 연결 끊긴 것으로 간주
+          const isStale = syncTime > 0 && (Date.now() - syncTime > 30000);
+
           callback({
-            connected: data.connected ?? false,
-            lastSyncAt: data.lastSyncAt ?? 0,
+            connected: isConnected && !isStale,
+            lastSyncAt: syncTime,
             message: data.message,
             progress: data.progress,
           });

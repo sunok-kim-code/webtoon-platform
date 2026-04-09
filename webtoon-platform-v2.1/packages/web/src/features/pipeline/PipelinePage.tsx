@@ -2843,13 +2843,54 @@ export function PipelinePage() {
                     }));
                     const dialogueHints = extractDialogueHints(sceneText, panelDescs);
 
-                    const panelList = Object.entries(generatedImages)
-                      .map(([idx, url]) => ({
-                        index: parseInt(idx),
-                        imageUrl: url,
-                        description: panelPrompts[parseInt(idx)] || editingPanels[parseInt(idx)]?.description || "",
-                      }))
-                      .sort((a, b) => a.index - b.index);
+                    // 이미지 원본 크기 로드 (동적 높이 계산용)
+                    const imgEntries = Object.entries(generatedImages).sort(
+                      (a, b) => parseInt(a[0]) - parseInt(b[0])
+                    );
+                    const imgDimensions: Record<number, { w: number; h: number }> = {};
+                    await Promise.all(
+                      imgEntries.map(([idx, url]) =>
+                        new Promise<void>((resolve) => {
+                          const img = new Image();
+                          img.onload = () => {
+                            imgDimensions[parseInt(idx)] = { w: img.naturalWidth, h: img.naturalHeight };
+                            resolve();
+                          };
+                          img.onerror = () => resolve(); // 실패 시 기본값 사용
+                          img.crossOrigin = "anonymous";
+                          img.src = url;
+                        })
+                      )
+                    );
+
+                    const panelList = imgEntries
+                      .map(([idx, url]) => {
+                        const i = parseInt(idx);
+                        const panel = editingPanels[i];
+                        const dim = imgDimensions[i];
+
+                        // 이 패널 이후 ~ 다음 이미지 패널 사이의 narration 패널 텍스트 수집
+                        let narrationTexts: string[] = [];
+                        for (let ni = i + 1; ni < editingPanels.length; ni++) {
+                          const nType = editingPanels[ni]?.panel_type ?? "visual";
+                          if (nType === "narration") {
+                            narrationTexts.push(editingPanels[ni].description);
+                          } else if (generatedImages[ni]) {
+                            break; // 다음 이미지 패널에 도달하면 중지
+                          }
+                        }
+
+                        return {
+                          index: i,
+                          imageUrl: url,
+                          description: panelPrompts[i] || panel?.description || "",
+                          origWidth: dim?.w,
+                          origHeight: dim?.h,
+                          dialogues: (panel as any)?.dialogues || [],
+                          sfx: (panel as any)?.sfx || [],
+                          narration: narrationTexts.length > 0 ? narrationTexts.join("\n") : undefined,
+                        };
+                      });
 
                     const epNum = parseInt(episodeId.replace(/\D/g, "") || "1");
                     const pages = buildPageDataFromPanels(panelList, dialogueHints, epNum, 720);
