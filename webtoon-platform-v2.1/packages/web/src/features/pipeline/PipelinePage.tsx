@@ -224,6 +224,27 @@ export function PipelinePage() {
     if (projectId) loadReferences(projectId);
   }, [projectId, loadReferences]);
 
+  // ── 프로젝트/에피소드 제목 로드 ──
+  const [projectTitle, setProjectTitle] = useState("");
+  const [episodeTitle, setEpisodeTitle] = useState("");
+  useEffect(() => {
+    if (!projectId) return;
+    (async () => {
+      try {
+        const projects = await firebaseService.fetchProjects();
+        const proj = projects.find(p => p.id === projectId);
+        if (proj) setProjectTitle(proj.title);
+        if (episodeId) {
+          const episodes = await firebaseService.fetchEpisodes(projectId);
+          const ep = episodes.find(e => e.id === episodeId);
+          if (ep) setEpisodeTitle(ep.number ? `제 ${ep.number}화 ${ep.title}` : ep.title);
+        }
+      } catch (e) {
+        console.warn("[Pipeline] 프로젝트/에피소드 제목 로드 실패:", e);
+      }
+    })();
+  }, [projectId, episodeId]);
+
   // ── 상태 ──
   const [sceneText, setSceneText] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -2053,6 +2074,19 @@ export function PipelinePage() {
 
   return (
     <div style={S.container}>
+      {/* ── 브레드크럼: 프로젝트 / 에피소드 / 제목 ── */}
+      <div style={S.breadcrumb}>
+        <span style={S.breadcrumbLink} onClick={() => navigate("/projects")}>프로젝트</span>
+        <span style={S.breadcrumbSep}>/</span>
+        <span style={S.breadcrumbLink} onClick={() => navigate(`/project/${projectId}/episodes`)}>{projectTitle || "에피소드"}</span>
+        {episodeTitle && (
+          <>
+            <span style={S.breadcrumbSep}>/</span>
+            <span style={S.breadcrumbCurrent}>{episodeTitle}</span>
+          </>
+        )}
+      </div>
+
       {/* ── 단계 네비게이션 ── */}
       <div style={S.stepNav}>
         {STEPS.map(step => (
@@ -3253,6 +3287,21 @@ const EXAMPLE_SCENES = [
 
 const S = {
   container: { padding: "0", maxWidth: "1400px", margin: "0 auto" } as const,
+
+  breadcrumb: {
+    display: "flex", alignItems: "center", gap: "6px",
+    padding: "10px 24px", fontSize: "13px", color: "#6b7280",
+    borderBottom: "1px solid #f3f4f6", background: "#fafafa",
+  } as const,
+  breadcrumbLink: {
+    color: "#4f46e5", cursor: "pointer", fontWeight: "500",
+  } as const,
+  breadcrumbSep: {
+    color: "#d1d5db", fontSize: "12px",
+  } as const,
+  breadcrumbCurrent: {
+    color: "#111827", fontWeight: "600",
+  } as const,
 
   stepNav: {
     display: "flex", alignItems: "center", gap: "4px", padding: "16px 24px",
