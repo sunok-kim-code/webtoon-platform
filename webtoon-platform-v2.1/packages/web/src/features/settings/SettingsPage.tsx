@@ -24,6 +24,7 @@ const API_KEY_FIELDS = [
   { key: "VERTEX_ACCESS_TOKEN", label: "Vertex AI Access Token (1시간 만료)", placeholder: "ya29.a0..." },
   { key: "KIE_API_KEY", label: "Kie API Key (Seedream 4.0)", placeholder: "0afd..." },
   { key: "XAI_API_KEY", label: "xAI (Grok) API Key" },
+  { key: "NINJACHAT_API_KEY", label: "NinjaChat API Key" },
   { key: "STABILITY_API_KEY", label: "Stability AI API Key" },
   { key: "SIRAY_API_KEY", label: "Siray API Key" },
 ];

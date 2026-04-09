@@ -7,7 +7,7 @@ import { fetchFreshToken } from "./firebase";
 
 // ─── 모델 카탈로그 ──────────────────────────────────────────
 
-export type KieImageCategory = "recommended" | "google" | "seedream" | "flux" | "grok" | "gpt" | "ideogram" | "qwen" | "other";
+export type KieImageCategory = "recommended" | "google" | "seedream" | "flux" | "grok" | "gpt" | "ideogram" | "qwen" | "ninjachat" | "other";
 
 export interface KieImageModel {
   id: string;          // API model ID (e.g. "google/imagen4")
@@ -237,6 +237,26 @@ export const KIE_IMAGE_MODELS: KieImageModel[] = [
     supportedSizes: ["square_hd", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9"],
     defaultSize: "portrait_4_3",
   },
+  // ── xAI Grok Image (직접 호출) ──
+  {
+    id: "xai/grok-image",
+    name: "Grok Image (xAI 고품질)",
+    category: "grok",
+    mode: "text2img",
+    description: "xAI 직접 호출 — grok-imagine-image-pro (API 키 필요)",
+    supportedSizes: ["square_hd", "portrait_4_3", "portrait_16_9", "landscape_4_3", "landscape_16_9"],
+    defaultSize: "portrait_4_3",
+  },
+  // ── NinjaChat (프록시 호출) ──
+  {
+    id: "ninjachat/vision1",
+    name: "NinjaChat Vision1",
+    category: "ninjachat",
+    mode: "text2img",
+    description: "NinjaChat ninja-vision-1 이미지 생성 (API 키 필요)",
+    supportedSizes: ["square_hd", "portrait_4_3", "portrait_16_9"],
+    defaultSize: "square_hd",
+  },
 ];
 
 // ─── API 호출 ──────────────────────────────────────────────
@@ -258,12 +278,20 @@ export function setSelectedImageModel(modelId: string): void {
 
 export function isKieImageConfigured(): boolean {
   if (getKieApiKey().length > 10) return true;
-  // Vertex AI 직접 호출 모델이 선택된 경우 Vertex 설정 확인
   const model = getSelectedImageModel();
+  // Vertex AI 직접 호출 모델
   if (model.startsWith("vertex/")) {
     const projectId = localStorage.getItem("VERTEX_PROJECT_ID") || "";
     const token = localStorage.getItem("VERTEX_ACCESS_TOKEN") || "";
     return !!(projectId && token);
+  }
+  // xAI Grok Image 직접 호출
+  if (model.startsWith("xai/")) {
+    return !!(localStorage.getItem("XAI_API_KEY"));
+  }
+  // NinjaChat
+  if (model.startsWith("ninjachat/")) {
+    return !!(localStorage.getItem("NINJACHAT_API_KEY"));
   }
   return false;
 }
@@ -734,6 +762,161 @@ function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+// ─── xAI Grok Image 직접 호출 ──────────────────────────────
+
+const XAI_GROK_RATIO: Record<string, string> = {
+  "square_hd": "1:1", "square": "1:1",
+  "portrait_4_3": "3:4", "portrait_3_2": "2:3", "portrait_16_9": "9:16",
+  "landscape_4_3": "4:3", "landscape_3_2": "3:2", "landscape_16_9": "16:9",
+};
+
+async function callXaiGrokImage(
+  prompt: string,
+  sizeKey: string,
+  referenceImageUrls?: string[],
+): Promise<{ imageUrl: string }> {
+  const apiKey = localStorage.getItem("XAI_API_KEY") || "";
+  if (!apiKey) throw new Error("xAI API 키가 필요합니다. 설정에서 XAI_API_KEY를 입력하세요.");
+
+  const aspectRatio = XAI_GROK_RATIO[sizeKey] || "3:4";
+
+  // 레퍼런스 이미지가 있으면 edits 엔드포인트 사용
+  const hasRefs = referenceImageUrls && referenceImageUrls.length > 0;
+  const url = hasRefs
+    ? "https://api.x.ai/v1/images/edits"
+    : "https://api.x.ai/v1/images/generations";
+
+  const body: Record<string, unknown> = {
+    model: hasRefs ? "grok-imagine-image" : "grok-imagine-image-pro",
+    prompt: prompt.substring(0, 4000),
+    n: 1,
+    response_format: "b64_json",
+    aspect_ratio: aspectRatio,
+  };
+
+  // 레퍼런스 이미지 첨부
+  if (hasRefs) {
+    if (referenceImageUrls!.length === 1) {
+      body.image = { url: referenceImageUrls![0], type: "image_url" };
+    } else {
+      body.images = referenceImageUrls!.slice(0, 4).map(img => ({ url: img, type: "image_url" }));
+    }
+  }
+
+  const maxRetries = 3;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (res.status === 429) {
+      const wait = Math.min(15000 * Math.pow(2, attempt), 60000);
+      console.warn(`[GrokImage] 429 rate limit, waiting ${wait / 1000}s (attempt ${attempt + 1}/${maxRetries})...`);
+      await new Promise(r => setTimeout(r, wait));
+      continue;
+    }
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Grok Image ${res.status}: ${errText.substring(0, 300)}`);
+    }
+
+    const data = await res.json();
+    if (!data.data?.length) throw new Error("Grok Image: 이미지가 생성되지 않았습니다.");
+
+    const b64 = data.data[0].b64_json || "";
+    const dataUri = b64.startsWith("data:") ? b64 : `data:image/png;base64,${b64}`;
+
+    // base64 → Blob URL로 변환
+    const binaryStr = atob(dataUri.split(",")[1]);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+    const blob = new Blob([bytes], { type: "image/png" });
+    const blobUrl = URL.createObjectURL(blob);
+
+    console.log(`[GrokImage] Image generated (${blob.size} bytes)`);
+    return { imageUrl: blobUrl };
+  }
+
+  throw new Error("Grok Image: Rate limit exceeded after retries");
+}
+
+// ─── NinjaChat 이미지 생성 ────────────────────────────────
+
+async function callNinjaChatImage(
+  prompt: string,
+  sizeKey: string,
+  referenceImageUrls?: string[],
+): Promise<{ imageUrl: string }> {
+  const apiKey = localStorage.getItem("NINJACHAT_API_KEY") || "";
+  if (!apiKey) throw new Error("NinjaChat API 키가 필요합니다. 설정에서 NINJACHAT_API_KEY를 입력하세요.");
+
+  // NinjaChat 지원 사이즈: 1920x1920, 2560x1440, 1440x2560
+  const NINJA_SIZE: Record<string, string> = {
+    "square_hd": "1920x1920", "square": "1920x1920",
+    "portrait_4_3": "1440x2560", "portrait_3_2": "1440x2560", "portrait_16_9": "1440x2560",
+    "landscape_4_3": "2560x1440", "landscape_3_2": "2560x1440", "landscape_16_9": "2560x1440",
+  };
+  const size = NINJA_SIZE[sizeKey] || "1920x1920";
+
+  const body: Record<string, unknown> = {
+    prompt: prompt.substring(0, 4000),
+    model: "ninja-vision-1",
+    size,
+    n: 1,
+    _apiKey: apiKey,
+  };
+
+  // 레퍼런스 이미지 (첫 번째만 사용)
+  if (referenceImageUrls && referenceImageUrls.length > 0) {
+    body.image = referenceImageUrls[0];
+  }
+
+  console.log(`[NinjaChat] Model: ninja-vision-1, size: ${size}, has_ref: ${!!body.image}`);
+
+  const maxRetries = 3;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const res = await fetch("/api/ninjachat-images", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Api-Key": apiKey,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (res.status === 429) {
+      const wait = Math.min(15000 * Math.pow(2, attempt), 60000);
+      console.warn(`[NinjaChat] Rate limited, waiting ${wait / 1000}s...`);
+      await new Promise(r => setTimeout(r, wait));
+      continue;
+    }
+    if (res.status === 402) {
+      throw new Error("NinjaChat: 잔액 부족 — API 계정을 확인해주세요.");
+    }
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`NinjaChat ${res.status}: ${errText.substring(0, 300)}`);
+    }
+
+    const data = await res.json();
+    if (data.images?.length > 0) {
+      const imgUrl = data.images[0].url;
+      console.log(`[NinjaChat] Image generated: ${imgUrl.substring(0, 80)}`);
+      return { imageUrl: imgUrl };
+    }
+
+    throw new Error("NinjaChat: 이미지가 생성되지 않았습니다.");
+  }
+
+  throw new Error("NinjaChat: 재시도 초과");
+}
+
 /** 이미지 URL → img 태그 + canvas → base64 (CORS 우회용 fallback) */
 function imageUrlToBase64ViaCanvas(url: string): Promise<{ data: string; mimeType: string }> {
   return new Promise((resolve, reject) => {
@@ -928,6 +1111,34 @@ async function generateImageOnce(
     console.log(`[VertexImage] Done in ${elapsed}s`);
 
     return { imageUrl, taskId: "vertex-direct", modelId, duration: elapsed };
+  }
+
+  // ── xAI Grok Image: 직접 호출 (동기식) ──
+  if (modelId.startsWith("xai/")) {
+    options?.onProgress?.("generating", 0);
+    console.log(`[GrokImage] Direct call: model=${modelId}, refs=${options?.referenceImageUrls?.length || 0}`);
+
+    const { imageUrl } = await callXaiGrokImage(prompt, rawSize, options?.referenceImageUrls);
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+
+    options?.onProgress?.("success", elapsed);
+    console.log(`[GrokImage] Done in ${elapsed}s`);
+
+    return { imageUrl, taskId: "xai-direct", modelId, duration: elapsed };
+  }
+
+  // ── NinjaChat: 프록시 호출 (동기식) ──
+  if (modelId.startsWith("ninjachat/")) {
+    options?.onProgress?.("generating", 0);
+    console.log(`[NinjaChat] Proxy call: model=${modelId}, refs=${options?.referenceImageUrls?.length || 0}`);
+
+    const { imageUrl } = await callNinjaChatImage(prompt, rawSize, options?.referenceImageUrls);
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+
+    options?.onProgress?.("success", elapsed);
+    console.log(`[NinjaChat] Done in ${elapsed}s`);
+
+    return { imageUrl, taskId: "ninjachat-direct", modelId, duration: elapsed };
   }
 
   // ── Flux Kontext: 별도 엔드포인트 + polling ──
