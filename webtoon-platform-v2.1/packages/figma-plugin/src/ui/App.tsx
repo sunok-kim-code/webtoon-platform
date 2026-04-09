@@ -10,8 +10,9 @@ import BubblePanel from "./panels/BubblePanel";
 import SFXPanel from "./panels/SFXPanel";
 import LayoutPanel from "./panels/LayoutPanel";
 import ExportPanel from "./panels/ExportPanel";
+import FirebaseSyncPanel from "./panels/FirebaseSyncPanel";
 
-type TabType = "import" | "bubble" | "sfx" | "layout" | "export";
+type TabType = "sync" | "import" | "bubble" | "sfx" | "layout" | "export";
 
 interface PluginMessage {
   type: string;
@@ -19,7 +20,8 @@ interface PluginMessage {
 }
 
 const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<TabType>("import");
+  const [activeTab, setActiveTab] = useState<TabType>("sync");
+  const [firestoreConnected, setFirestoreConnected] = useState(false);
   const [connected, setConnected] = useState(false);
   const [syncProgress, setSyncProgress] = useState<{
     current: number;
@@ -103,7 +105,7 @@ const App: React.FC = () => {
       width: "8px",
       height: "8px",
       borderRadius: "50%",
-      backgroundColor: connected ? "#00e676" : "#666",
+      backgroundColor: firestoreConnected ? "#00e676" : "#666",
       transition: "background 0.3s",
     },
     content: {
@@ -139,6 +141,12 @@ const App: React.FC = () => {
       {/* Tab Content */}
       <div style={styles.content}>
         <div style={styles.tabContent}>
+          {activeTab === "sync" && (
+            <FirebaseSyncPanel
+              onMessage={sendMessage}
+              onConnectionChange={setFirestoreConnected}
+            />
+          )}
           {activeTab === "import" && <ImportPanel onMessage={sendMessage} />}
           {activeTab === "bubble" && <BubblePanel onMessage={sendMessage} />}
           {activeTab === "sfx" && <SFXPanel onMessage={sendMessage} />}

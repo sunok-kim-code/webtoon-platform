@@ -4,7 +4,7 @@
 
 import React from "react";
 
-type TabType = "import" | "bubble" | "sfx" | "layout" | "export";
+type TabType = "sync" | "import" | "bubble" | "sfx" | "layout" | "export";
 
 interface TabBarProps {
   activeTab: TabType;
@@ -12,6 +12,7 @@ interface TabBarProps {
 }
 
 const TAB_CONFIG = [
+  { id: "sync" as TabType, label: "연결", icon: "🔗" },
   { id: "import" as TabType, label: "가져오기", icon: "📥" },
   { id: "bubble" as TabType, label: "말풍선", icon: "💬" },
   { id: "sfx" as TabType, label: "효과음", icon: "🔊" },

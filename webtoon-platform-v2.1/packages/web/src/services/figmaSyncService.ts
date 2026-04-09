@@ -54,6 +54,8 @@ export async function figmaSend(
     type,
     payload,
     createdAt: Date.now(),
+    sentAt: Date.now(),
+    messageId: `${type}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     status: "pending",
   });
 

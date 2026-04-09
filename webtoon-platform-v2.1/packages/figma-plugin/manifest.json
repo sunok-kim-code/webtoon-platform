@@ -7,9 +7,11 @@
   "editorType": ["figma"],
   "networkAccess": {
     "allowedDomains": [
-      "*.firebaseio.com",
-      "*.googleapis.com",
-      "firebasestorage.googleapis.com"
-    ]
+      "https://*.firebaseio.com",
+      "https://*.googleapis.com",
+      "https://*.gstatic.com",
+      "https://firebasestorage.googleapis.com"
+    ],
+    "reasoning": "Firebase Firestore 실시간 동기화 및 Storage 이미지 접근"
   }
 }
