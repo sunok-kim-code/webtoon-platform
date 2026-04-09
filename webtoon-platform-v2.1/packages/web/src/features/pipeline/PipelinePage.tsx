@@ -1946,14 +1946,14 @@ export function PipelinePage() {
     setEditingPanels(prev => prev.map((p, i) => i === idx ? { ...p, ...updates } : p));
   };
   const addPanel = () => {
-    if (editingPanels.length >= 12) { alert("최대 12패널"); return; }
+    if (editingPanels.length >= 80) { alert("최대 80패널"); return; }
     setEditingPanels(prev => [...prev, {
       panelNumber: prev.length + 1, description: "", characters: analysis?.characters.map(c => c.name) || [],
       cameraAngle: "medium shot", emotion: "neutral", composition: "", aiPrompt: "", notes: "",
     }]);
   };
   const insertPanelAfter = (idx: number) => {
-    if (editingPanels.length >= 60) { alert("최대 60패널"); return; }
+    if (editingPanels.length >= 80) { alert("최대 80패널"); return; }
     const newPanel: GeminiPanelSuggestion = {
       panelNumber: idx + 2,
       description: "",
