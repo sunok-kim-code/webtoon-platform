@@ -847,6 +847,17 @@ async function callXaiGrokImage(
 
 // ─── NinjaChat 이미지 생성 ────────────────────────────────
 
+/** NinjaChat 사이즈 매핑 — sizeKey → WxH 해상도 */
+const NINJACHAT_SIZE_MAP: Record<string, string> = {
+  "square_hd": "1440x1440", "square": "1440x1440",
+  "portrait_4_3": "1080x1440", "portrait_3_2": "960x1440",
+  "portrait_16_9": "810x1440",
+  "landscape_4_3": "1920x1440", "landscape_3_2": "2160x1440",
+  "landscape_16_9": "2560x1440",
+  "1:1": "1440x1440", "3:4": "1080x1440", "2:3": "960x1440",
+  "9:16": "810x1440", "4:3": "1920x1440", "16:9": "2560x1440",
+};
+
 async function callNinjaChatImage(
   prompt: string,
   sizeKey: string,
@@ -855,13 +866,15 @@ async function callNinjaChatImage(
   const apiKey = localStorage.getItem("NINJACHAT_API_KEY") || "";
   if (!apiKey) throw new Error("NinjaChat API 키가 필요합니다. 설정에서 NINJACHAT_API_KEY를 입력하세요.");
 
+  const size = NINJACHAT_SIZE_MAP[sizeKey] || "1080x1440";
+
   // NinjaChat API: POST https://www.ninjachat.ai/api/v1/images
   // 파라미터: prompt, model, size, image (옵션)
   // 응답: { images: [{ url: "..." }] }
   const body: Record<string, unknown> = {
     prompt: prompt.substring(0, 4000),
     model: "ninja-vision-1",
-    size: "2560x1440",
+    size,
     _apiKey: apiKey,
   };
 
@@ -870,7 +883,7 @@ async function callNinjaChatImage(
     body.image = referenceImageUrls[0];
   }
 
-  console.log(`[NinjaChat] Model: ninja-vision-1, size: 2560x1440, has_ref: ${!!body.image}`);
+  console.log(`[NinjaChat] Model: ninja-vision-1, size: ${size}, has_ref: ${!!body.image}`);
 
   const maxRetries = 3;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
