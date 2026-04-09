@@ -847,15 +847,15 @@ async function callXaiGrokImage(
 
 // ─── NinjaChat 이미지 생성 ────────────────────────────────
 
-/** NinjaChat 사이즈 매핑 — sizeKey → WxH 해상도 */
+/** NinjaChat 사이즈 매핑 — 지원: 1920x1920, 2560x1440, 1440x2560 */
 const NINJACHAT_SIZE_MAP: Record<string, string> = {
-  "square_hd": "1440x1440", "square": "1440x1440",
-  "portrait_4_3": "1080x1440", "portrait_3_2": "960x1440",
-  "portrait_16_9": "810x1440",
-  "landscape_4_3": "1920x1440", "landscape_3_2": "2160x1440",
+  "square_hd": "1920x1920", "square": "1920x1920",
+  "portrait_4_3": "1440x2560", "portrait_3_2": "1440x2560",
+  "portrait_16_9": "1440x2560",
+  "landscape_4_3": "2560x1440", "landscape_3_2": "2560x1440",
   "landscape_16_9": "2560x1440",
-  "1:1": "1440x1440", "3:4": "1080x1440", "2:3": "960x1440",
-  "9:16": "810x1440", "4:3": "1920x1440", "16:9": "2560x1440",
+  "1:1": "1920x1920", "3:4": "1440x2560", "2:3": "1440x2560",
+  "9:16": "1440x2560", "4:3": "2560x1440", "16:9": "2560x1440",
 };
 
 async function callNinjaChatImage(
