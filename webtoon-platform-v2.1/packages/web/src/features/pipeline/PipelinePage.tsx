@@ -1271,119 +1271,23 @@ export function PipelinePage() {
       prompt = artStyle.prefix + prompt;
     }
 
-    // ── Reference Resolver 텍스트 주입 제거 ──
-    // 레퍼런스 이미지는 URL로 직접 전달되므로 텍스트 기반 [References: ...] 불필요
-    // (이전: ReferenceResolver.resolve()로 context/character 라벨을 프롬프트에 삽입 → 이미지 품질 저하 원인)
-
-    // ── 레퍼런스 이미지 URL 수집 (씬 그룹 앵커 + 이전 패널 최우선) ──
-    const anchorRefs: string[] = [];     // 씬 그룹 앵커 패널 (스타일 드리프트 방지)
-    const prevPanelRefs: string[] = [];   // 이전 패널 (최우선)
-    const charOutfitRefs: string[] = [];  // 캐릭터/의상 ref
-    const customRefUrls: string[] = [];   // 커스텀 ref
-    const locationRefs: string[] = [];    // 장소 ref
-
-    // 0) 씬 그룹 앵커 패널 (같은 sceneGroupId의 첫 패널 이미지 — 스타일 드리프트 방지)
-    //    ※ anchor/first 패널도 excluded에 포함되면 건너뜀
-    if (panel && idx > 0 && !excluded?.has("anchor")) {
-      const currentGroupId = (panel as any).sceneGroupId;
-      if (currentGroupId) {
-        const anchorIdx = editingPanels.findIndex(
-          (p, i) => i < idx && (p as any).sceneGroupId === currentGroupId && (p as any).sceneGroupIndex === 0
-        );
-        if (anchorIdx >= 0 && anchorIdx !== idx - 1) {
-          const anchorImg = generatedImages[anchorIdx];
-          if (isValidImageUrl(anchorImg)) anchorRefs.push(anchorImg);
-        }
-      }
-      if (idx > 1) {
-        const firstImg = generatedImages[0];
-        if (isValidImageUrl(firstImg) && !anchorRefs.includes(firstImg)) {
-          anchorRefs.push(firstImg);
-        }
-      }
-    }
-
-    // 1) 이전 패널 이미지 (가장 중요 — 스타일 연속성, 가중치 부여를 위해 직전 패널 ×3 중복)
-    if (idx > 0 && !excluded?.has("prev")) {
-      const prevImg = generatedImages[idx - 1];
-      if (isValidImageUrl(prevImg)) {
-        prevPanelRefs.push(prevImg, prevImg, prevImg);
-      }
-      if (idx > 1) {
-        const prev2Img = generatedImages[idx - 2];
-        if (isValidImageUrl(prev2Img)) prevPanelRefs.push(prev2Img);
-      }
-    }
-
-    // 2) 캐릭터/의상 레퍼런스
-    if (analysis && panel) {
-      for (const charName of panel.characters) {
-        if (excluded?.has(`char_${charName}`)) continue;
-        let outfitRefAdded = false;
-        let outfitId = (panel as any).characterOutfits?.[charName];
-        let outfitEntry = outfitId ? registeredOutfits.find(o => o.id === outfitId) : undefined;
-        if (!outfitEntry) {
-          outfitEntry = registeredOutfits.find(o => o.id.startsWith(charName + "_") || o.id.startsWith(charName));
-          if (outfitEntry) outfitId = outfitEntry.id;
-        }
-        if (outfitEntry?.references?.length) {
-          const best = [...outfitEntry.references].sort((a, b) => (b.quality || 0) - (a.quality || 0))[0];
-          if (isValidImageUrl(best?.storageUrl) && !charOutfitRefs.includes(best.storageUrl)) {
-            charOutfitRefs.push(best.storageUrl);
-            outfitRefAdded = true;
-          }
-        }
-        if (!outfitRefAdded) {
-          const charRefImg = refImages[`char_${charName}`];
-          if (isValidImageUrl(charRefImg) && !charOutfitRefs.includes(charRefImg)) charOutfitRefs.push(charRefImg);
-        }
-      }
-    }
-
-    // 3) 커스텀 레퍼런스 (사용자 수동 선택)
+    // ── 레퍼런스 이미지: 사용자가 직접 선택한 커스텀 레퍼런스만 전달 ──
+    const finalRefUrls: string[] = [];
     const customRefs = panelCustomRefs[idx] || [];
     for (const cUrl of customRefs) {
-      if (isValidImageUrl(cUrl) && !customRefUrls.includes(cUrl)) customRefUrls.push(cUrl);
+      if (isValidImageUrl(cUrl) && !finalRefUrls.includes(cUrl)) finalRefUrls.push(cUrl);
     }
 
-    // 4) 장소 레퍼런스
-    if (analysis) {
-      const panelLocName = panel?.location || analysis.location.name;
-      if (!excluded?.has(`loc_${panelLocName}`)) {
-        let locRefImg = refImages[`loc_${panelLocName}`] || refImages[`loc_${analysis.location.name}`];
-        if (!locRefImg) {
-          const regLoc = registeredLocs.find(l => l.name === panelLocName)
-            || registeredLocs.find(l => l.name === analysis.location.name);
-          locRefImg = (regLoc as any)?.references?.[0]?.storageUrl;
-        }
-        if (isValidImageUrl(locRefImg)) locationRefs.push(locRefImg);
-      }
-    }
+    console.log(`[Panel ${idx + 1}] 커스텀 레퍼런스 ${finalRefUrls.length}개:`, finalRefUrls.map(u => u.substring(0, 60)));
 
-    // 우선순위: 이전 패널 → 씬 그룹 앵커 → 캐릭터/의상 → 커스텀 → 장소 (중복 제거)
-    const allRefs = [...prevPanelRefs, ...anchorRefs, ...charOutfitRefs, ...customRefUrls, ...locationRefs];
-    const uniqueRefs: string[] = [];
-    for (const url of allRefs) {
-      if (!uniqueRefs.includes(url)) uniqueRefs.push(url);
-    }
-    const finalRefUrls = uniqueRefs; // 제한 없이 모든 ref 전달
-
-    // 디버그: 제외된 레퍼런스와 최종 전달 레퍼런스 로그
-    if (excluded && excluded.size > 0) {
-      console.log(`[Panel ${idx + 1}] 제외된 refs:`, [...excluded]);
-    }
-    console.log(`[Panel ${idx + 1}] 최종 레퍼런스 ${finalRefUrls.length}개:`,
-      { prev: prevPanelRefs.length, anchor: anchorRefs.length, char: charOutfitRefs.length, custom: customRefUrls.length, loc: locationRefs.length }
-    );
-
-    // ── 텍스트 렌더링 금지 + 최소한의 스타일 힌트만 ──
+    // ── 텍스트 렌더링 금지 ──
     prompt += "\nDo NOT render any text, letters, words, sound effects, onomatopoeia, or speech bubbles in the image.";
-    if (idx > 0 && generatedImages[idx - 1] && !excluded?.has("prev")) {
+    if (finalRefUrls.length > 0) {
       prompt += "\nMatch the art style of the reference images exactly.";
     }
 
     return { prompt, referenceImageUrls: finalRefUrls };
-  }, [editingPanels, panelPrompts, artStyleKey, analysis, episodeId, registeredChars, registeredLocs, registeredOutfits, generatedImages, refImages, panelCustomRefs, panelExcludedRefs]);
+  }, [editingPanels, panelPrompts, artStyleKey, panelCustomRefs]);
 
   // ── 단일 패널 이미지 생성 (preparePanelData + Context Chain 연동) ──
   const generatePanelImage = useCallback(async (idx: number) => {
