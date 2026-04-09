@@ -274,7 +274,7 @@ export function buildPageDataFromPanels(
       bubbles.push({
         id: `bubble_${panel.index}_${di}`,
         type: "dialogue" as const,
-        text: `${d.character}: ${d.text}`,
+        text: d.text,
         position: { x: bx, y: by },
         size: { w: bw, h: bh },
         svgPath: {
