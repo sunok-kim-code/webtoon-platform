@@ -178,6 +178,7 @@ async function syncApiKeysFromFirestore(): Promise<number> {
  */
 export async function saveApiKeys(keys: Record<string, string>): Promise<void> {
   try {
+    await ensureFirebaseReady();
     const { collection, doc, setDoc } = await import("firebase/firestore");
     const db = getDb();
     await setDoc(doc(collection(db, "api_keys"), "shared"), keys, { merge: true });
