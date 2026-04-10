@@ -3,8 +3,9 @@
 // 라우팅 + 전역 레이아웃 + 헤더 + 사이드바
 // ============================================================
 
-import React from "react";
-import { HashRouter, Routes, Route, useLocation, Link } from "react-router-dom";
+import React, { useState, useEffect, useCallback } from "react";
+import { HashRouter, Routes, Route, useLocation, Link, useNavigate } from "react-router-dom";
+import type { Episode } from "@webtoon/shared";
 
 // Feature pages (lazy loaded)
 import { ProjectListPage } from "@/features/project/ProjectListPage";
@@ -145,14 +146,79 @@ interface NavLink {
   label: string;
   path: string;
   icon?: string;
+  hasEpisodeList?: boolean;
 }
 
-function Sidebar({ links, currentPath }: { links: NavLink[]; currentPath: string }) {
+interface SidebarProps {
+  links: NavLink[];
+  currentPath: string;
+  projectId: string | null;
+  episodes: Episode[];
+}
+
+function Sidebar({ links, currentPath, projectId, episodes }: SidebarProps) {
+  const [episodeListOpen, setEpisodeListOpen] = useState(false);
+  const navigate = useNavigate();
+
+  // 에피소드 경로에 있으면 자동으로 목록 열기
+  useEffect(() => {
+    if (currentPath.includes("/episode/")) {
+      setEpisodeListOpen(true);
+    }
+  }, [currentPath]);
+
   return (
     <aside className="sidebar">
       <nav className="sidebar-nav">
         {links.map((link) => {
-          const isActive = currentPath === link.path || currentPath.startsWith(link.path + "/");
+          const isActive = link.hasEpisodeList
+            ? currentPath === link.path
+            : currentPath === link.path || currentPath.startsWith(link.path + "/");
+
+          if (link.hasEpisodeList && projectId) {
+            // 에피소드 메뉴: 클릭 시 에피소드 페이지로 이동 + 토글
+            const isEpisodeSection = currentPath.startsWith(link.path);
+            return (
+              <React.Fragment key={link.label}>
+                <div
+                  className={`nav-link episode-toggle ${isEpisodeSection ? "active" : ""}`}
+                  onClick={() => {
+                    setEpisodeListOpen(!episodeListOpen);
+                    navigate(link.path);
+                  }}
+                  title={link.label}
+                >
+                  {link.icon && <span className="nav-icon">{link.icon}</span>}
+                  <span className="nav-label">{link.label}</span>
+                  <span className={`nav-arrow ${episodeListOpen ? "open" : ""}`}>
+                    ▸
+                  </span>
+                </div>
+                {episodeListOpen && episodes.length > 0 && (
+                  <div className="episode-sublist">
+                    {episodes
+                      .sort((a, b) => a.number - b.number)
+                      .map((ep) => {
+                        const epPath = `/project/${projectId}/episode/${ep.id}/pipeline`;
+                        const isEpActive = currentPath.includes(`/episode/${ep.id}`);
+                        return (
+                          <Link
+                            key={ep.id}
+                            to={epPath}
+                            className={`nav-link sub-link ${isEpActive ? "active" : ""}`}
+                            title={`${ep.number}화: ${ep.title}`}
+                          >
+                            <span className="ep-number">{ep.number}화</span>
+                            <span className="nav-label ep-title">{ep.title}</span>
+                          </Link>
+                        );
+                      })}
+                  </div>
+                )}
+              </React.Fragment>
+            );
+          }
+
           return (
             <Link
               key={link.label}
@@ -208,6 +274,59 @@ function Sidebar({ links, currentPath }: { links: NavLink[]; currentPath: string
           font-weight: 600;
         }
 
+        .nav-link.episode-toggle {
+          cursor: pointer;
+          user-select: none;
+        }
+
+        .nav-arrow {
+          font-size: 11px;
+          transition: transform 0.2s;
+          color: #999;
+          margin-left: auto;
+        }
+
+        .nav-arrow.open {
+          transform: rotate(90deg);
+        }
+
+        .episode-sublist {
+          background: rgba(0, 0, 0, 0.02);
+        }
+
+        .nav-link.sub-link {
+          padding: 8px 16px 8px 28px;
+          font-size: 13px;
+          gap: 8px;
+          border-left: 3px solid transparent;
+        }
+
+        .nav-link.sub-link:hover {
+          background-color: rgba(102, 126, 234, 0.06);
+        }
+
+        .nav-link.sub-link.active {
+          background-color: rgba(102, 126, 234, 0.12);
+          border-left-color: #667eea;
+          color: #667eea;
+          font-weight: 600;
+        }
+
+        .ep-number {
+          font-size: 12px;
+          color: #888;
+          white-space: nowrap;
+          min-width: 28px;
+        }
+
+        .nav-link.sub-link.active .ep-number {
+          color: #667eea;
+        }
+
+        .ep-title {
+          font-size: 12px;
+        }
+
         .nav-icon {
           display: inline-flex;
           align-items: center;
@@ -261,14 +380,42 @@ function AppContent() {
   // 사이드바 네비게이션 링크
   // 현재 프로젝트 경로 추출 (있을 경우)
   const projectMatch = location.pathname.match(/^\/project\/([^/]+)/);
-  const currentProjectPath = projectMatch ? `/project/${projectMatch[1]}` : null;
+  const currentProjectId = projectMatch ? projectMatch[1] : null;
+  const currentProjectPath = currentProjectId ? `/project/${currentProjectId}` : null;
 
+  // 에피소드 목록 로드 (localStorage)
+  const [episodes, setEpisodes] = useState<Episode[]>([]);
+
+  const loadEpisodes = useCallback(() => {
+    if (!currentProjectId) { setEpisodes([]); return; }
+    try {
+      const raw = localStorage.getItem(`webtoon_episodes_${currentProjectId}`);
+      setEpisodes(raw ? JSON.parse(raw) : []);
+    } catch { setEpisodes([]); }
+  }, [currentProjectId]);
+
+  useEffect(() => {
+    loadEpisodes();
+    // localStorage 변경 감지 (다른 탭/컴포넌트에서 저장 시)
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === `webtoon_episodes_${currentProjectId}`) loadEpisodes();
+    };
+    window.addEventListener("storage", onStorage);
+    // 같은 탭 내 변경 감지를 위해 주기적으로 체크 (에피소드 추가/삭제 시)
+    const interval = setInterval(loadEpisodes, 2000);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      clearInterval(interval);
+    };
+  }, [currentProjectId, loadEpisodes]);
+
+  // 순서: 프로젝트, 전체분석, 에피소드(드롭다운), 레퍼런스, 설정
   const sidebarLinks: NavLink[] = [
     { label: "프로젝트", path: "/", icon: "📚" },
     ...(currentProjectPath
       ? [
-          { label: "에피소드", path: currentProjectPath, icon: "📖" },
           { label: "전체분석", path: `${currentProjectPath}/full-analysis`, icon: "🚀" },
+          { label: "에피소드", path: currentProjectPath, icon: "📖", hasEpisodeList: true },
           { label: "레퍼런스", path: `${currentProjectPath}/references`, icon: "🎨" },
         ]
       : [
@@ -281,7 +428,7 @@ function AppContent() {
     <div className="app-layout">
       <AppHeader breadcrumbs={getBreadcrumbs()} />
       <div className="app-container">
-        <Sidebar links={sidebarLinks} currentPath={location.pathname} />
+        <Sidebar links={sidebarLinks} currentPath={location.pathname} projectId={currentProjectId} episodes={episodes} />
         <main className="main-content">
           <Routes>
             <Route path="/" element={<ProjectListPage />} />
