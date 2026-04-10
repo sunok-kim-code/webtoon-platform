@@ -378,9 +378,24 @@ function AppContent() {
   };
 
   // 사이드바 네비게이션 링크
-  // 현재 프로젝트 경로 추출 (있을 경우)
+  // 현재 프로젝트 경로 추출 (있을 경우) — 설정/레퍼런스 등 비프로젝트 경로에서도 유지
   const projectMatch = location.pathname.match(/^\/project\/([^/]+)/);
-  const currentProjectId = projectMatch ? projectMatch[1] : null;
+  const urlProjectId = projectMatch ? projectMatch[1] : null;
+
+  // 마지막 선택 프로젝트 기억 (설정 등 비프로젝트 페이지에서도 사이드바 유지)
+  const [rememberedProjectId, setRememberedProjectId] = useState<string | null>(() => {
+    return localStorage.getItem("webtoon_last_project_id");
+  });
+
+  useEffect(() => {
+    if (urlProjectId) {
+      setRememberedProjectId(urlProjectId);
+      localStorage.setItem("webtoon_last_project_id", urlProjectId);
+    }
+  }, [urlProjectId]);
+
+  // 프로젝트 목록 페이지("/")에서는 프로젝트 메뉴 숨기기, 그 외에서는 유지
+  const currentProjectId = urlProjectId || (location.pathname !== "/" ? rememberedProjectId : null);
   const currentProjectPath = currentProjectId ? `/project/${currentProjectId}` : null;
 
   // 에피소드 목록 로드 (localStorage)
