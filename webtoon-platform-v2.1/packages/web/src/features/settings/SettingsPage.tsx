@@ -3,7 +3,7 @@
 // ============================================================
 
 import { useState, useEffect } from "react";
-import { getFirebaseConfig, saveFirebaseConfig, GEMINI_MODELS, getCurrentModelId, setGeminiModel, getGeminiAuthMode, testGeminiConnection } from "@/services";
+import { getFirebaseConfig, saveFirebaseConfig, saveApiKeys, GEMINI_MODELS, getCurrentModelId, setGeminiModel, getGeminiAuthMode, testGeminiConnection } from "@/services";
 import type { GeminiModelId } from "@/services";
 import { KIE_IMAGE_MODELS, getSelectedImageModel, setSelectedImageModel, isKieImageConfigured, type KieImageCategory } from "@/services/kieImageService";
 
@@ -89,12 +89,18 @@ export function SettingsPage() {
       saveFirebaseConfig(firebaseConfig);
     }
 
-    // Save API keys
+    // Save API keys to localStorage + Firebase
+    const keysToSave: Record<string, string> = {};
     Object.entries(apiKeys).forEach(([key, value]) => {
       if (value) {
         localStorage.setItem(key, value);
+        keysToSave[key] = value;
       }
     });
+    // Firebase에도 저장 (다른 기기에서 동기화용)
+    if (Object.keys(keysToSave).length > 0) {
+      saveApiKeys(keysToSave).catch(err => console.warn("[Settings] Firebase API key save failed:", err));
+    }
 
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);

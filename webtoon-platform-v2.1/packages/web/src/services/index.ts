@@ -2,7 +2,7 @@
 // 서비스 레이어 통합 내보내기
 // ============================================================
 
-export { firebaseService, getFirebaseConfig, saveFirebaseConfig, ensureFirebaseReady } from "./firebase";
+export { firebaseService, getFirebaseConfig, saveFirebaseConfig, saveApiKeys, ensureFirebaseReady } from "./firebase";
 export { offlineService } from "./offline";
 export { imageProcessor } from "./imageProcessor";
 export {

@@ -120,6 +120,8 @@ export async function initFirebase(config?: Record<string, string>) {
 // ─── API 키 관리 (v1 호환) ──────────────────────────────────
 
 const API_KEY_NAMES = [
+  "GEMINI_API_KEY",
+  "ANTHROPIC_API_KEY",
   "VERTEX_PROJECT_ID",
   "VERTEX_LOCATION",
   "VERTEX_ACCESS_TOKEN",
@@ -131,6 +133,9 @@ const API_KEY_NAMES = [
   "KIE_API_KEY",
   "SIRAY_API_KEY",
   "HIGGSFIELD_CREDENTIALS",
+  "GEMINI_MODEL",
+  "ANALYSIS_MODEL",
+  "KIE_IMAGE_MODEL",
 ];
 
 let _apiKeySyncResolve: (value: number) => void;
@@ -153,10 +158,14 @@ async function syncApiKeysFromFirestore(): Promise<number> {
     const data = snap.data() as Record<string, string>;
     let synced = 0;
     for (const key of API_KEY_NAMES) {
-      if (data[key] && !localStorage.getItem(key)) {
+      if (data[key]) {
+        // Firebase 값이 있으면 항상 동기화 (다른 기기에서도 최신 키 사용)
         localStorage.setItem(key, data[key]);
         synced++;
       }
+    }
+    if (synced > 0) {
+      console.log(`[Firebase] API keys synced from Firestore: ${synced}개`);
     }
     return synced;
   } catch {
