@@ -255,7 +255,7 @@ export function buildPageDataFromPanels(
     const panelH = panelHeights[pi];
 
     // ── 1. 대사 말풍선 (패널 내부) ──
-    // 인라인 dialogues + dialogueHints 병합 후 중복 제거
+    // 인라인 dialogues가 있으면 그것만 사용, 없으면 dialogueHints 폴백
     const inlineDialogues: Array<{ character: string; text: string }> =
       panel.dialogues && panel.dialogues.length > 0 ? panel.dialogues : [];
     const hintDialogues: Array<{ character: string; text: string }> =
@@ -263,16 +263,17 @@ export function buildPageDataFromPanels(
         .filter(d => d.panelIndex === panel.index)
         .map(d => ({ character: d.character, text: d.text }));
 
-    // 인라인 우선, hints는 인라인에 없는 것만 추가
+    // 인라인이 있으면 인라인만, 없으면 hints 사용 (중복 방지)
+    const sourceDialogues = inlineDialogues.length > 0 ? inlineDialogues : hintDialogues;
     const seen = new Set<string>();
     const panelDialogues: Array<{ character: string; text: string }> = [];
-    for (const d of [...inlineDialogues, ...hintDialogues]) {
-      const key = d.text.trim();
-      if (!key || seen.has(key)) continue;
+    for (const d of sourceDialogues) {
+      const key = `${d.character.trim()}::${d.text.trim()}`;
+      if (!d.text.trim() || seen.has(key)) continue;
       seen.add(key);
       panelDialogues.push(d);
     }
-    console.log(`[FigmaExport] Panel ${panel.index}: inline=${inlineDialogues.length}, hints=${hintDialogues.length}, merged=${panelDialogues.length}`);
+    console.log(`[FigmaExport] Panel ${panel.index}: inline=${inlineDialogues.length}, hints=${hintDialogues.length}, final=${panelDialogues.length} (source=${inlineDialogues.length > 0 ? "inline" : "hints"})`);
 
     // 꼬리 왼쪽 (원본)
     const BUBBLE_PATH_TAIL_LEFT = "M104.425 1.75781C31.0913 1.75781 1.75793 60.0132 1.75793 131.214C1.75793 189.47 21.9246 239.095 54.0079 256.356C49.4246 275.774 35.6746 303.823 14.5913 318.926C40.2579 308.138 56.7579 286.562 65.9246 269.301C76.9246 275.774 89.7579 277.932 104.425 277.932C177.758 277.932 207.091 211.046 207.091 131.214C207.091 60.0132 177.758 1.75781 104.425 1.75781Z";
