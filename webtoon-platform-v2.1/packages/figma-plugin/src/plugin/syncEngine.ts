@@ -151,6 +151,22 @@ export class SyncEngine {
 
   /** 여러 페이지 일괄 동기화 */
   async batchSync(pages: PageData[]): Promise<void> {
+    // 이전 내보내기 잔여 프레임 정리 (새 데이터에 없는 pageIndex의 프레임 제거)
+    if (this.episodePage) {
+      const newPageIndices = new Set(pages.map(p => p.pageIndex));
+      for (const child of Array.from(this.episodePage.children)) {
+        const webAppId = child.getPluginData("webAppId");
+        if (webAppId && webAppId.startsWith("page_")) {
+          const pageIdx = parseInt(webAppId.replace("page_", ""));
+          if (!isNaN(pageIdx) && !newPageIndices.has(pageIdx)) {
+            console.log("[SyncEngine] 잔여 프레임 제거: " + webAppId);
+            child.remove();
+            this.mappings.delete(webAppId);
+          }
+        }
+      }
+    }
+
     for (let i = 0; i < pages.length; i++) {
       this.respond({
         type: "PROGRESS",

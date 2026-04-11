@@ -2741,13 +2741,6 @@ export function PipelinePage() {
                     setFigmaExportResult(`Figma로 ${pages.length}개 패널 + ${Object.values(v1BubblesByPanel).flat().length}개 말풍선 전송 완료! 플러그인에서 확인하세요.`);
                   } else {
                     // ── BATCH_SYNC 방식 (v1/v2 플러그인 모두 호환) ──
-                    const panelDescs = editingPanels.map((p, i) => ({
-                      index: i,
-                      description: p.description,
-                      characters: p.characters,
-                    }));
-                    const dialogueHints = extractDialogueHints(sceneText, panelDescs);
-
                     // 이미지 원본 크기 로드 (동적 높이 계산용)
                     const imgEntries = Object.entries(generatedImages).sort(
                       (a, b) => parseInt(a[0]) - parseInt(b[0])
@@ -2798,7 +2791,8 @@ export function PipelinePage() {
                       });
 
                     const epNum = parseInt(episodeId.replace(/\D/g, "") || "1");
-                    const pages = buildPageDataFromPanels(panelList, dialogueHints, epNum, 720);
+                    // dialogueHints는 사용하지 않음 — panel.dialogues 인라인 데이터만 사용하여 중복 방지
+                    const pages = buildPageDataFromPanels(panelList, [], epNum, 720);
 
                     await figmaBatchSync(projectId, pages as any);
                     setFigmaExportResult(`Figma로 ${panelList.length}개 패널 전송 완료! 플러그인에서 확인하세요.`);
