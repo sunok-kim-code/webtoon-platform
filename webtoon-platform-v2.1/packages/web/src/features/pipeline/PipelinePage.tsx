@@ -2784,7 +2784,10 @@ export function PipelinePage() {
                           description: panelPrompts[i] || panel?.description || "",
                           origWidth: dim?.w,
                           origHeight: dim?.h,
-                          dialogues: (panel as any)?.dialogues || [],
+                          dialogues: ((panel as any)?.dialogues || []).filter((d: any, idx2: number, arr: any[]) => {
+                            const key = `${(d.character || "").trim()}::${(d.text || "").trim()}`;
+                            return d.text?.trim() && arr.findIndex((x: any) => `${(x.character || "").trim()}::${(x.text || "").trim()}` === key) === idx2;
+                          }),
                           sfx: (panel as any)?.sfx || [],
                           narration: narrationTexts.length > 0 ? narrationTexts.join("\n") : undefined,
                         };
@@ -2939,11 +2942,19 @@ export function PipelinePage() {
                           </div>
                         );
                       }
-                      // v2.1: panel.dialogues + panel.sfx 또는 extractDialogueHints 폴백
-                      const pDialogues = (panel as any).dialogues || [];
+                      // v2.1: panel.dialogues + panel.sfx 또는 extractDialogueHints 폴백 (중복 제거)
+                      const pDialoguesRaw = (panel as any).dialogues || [];
                       const pSfx = (panel as any).sfx || [];
-                      const hasInlineData = pDialogues.length > 0 || pSfx.length > 0;
-                      const dialoguesToShow = hasInlineData ? pDialogues : panelDialogues.map((d: any) => ({ character: d.character, text: d.text }));
+                      const hasInlineData = pDialoguesRaw.length > 0 || pSfx.length > 0;
+                      const rawDialogues = hasInlineData ? pDialoguesRaw : panelDialogues.map((d: any) => ({ character: d.character, text: d.text }));
+                      // 대사 중복 제거
+                      const seenDlg = new Set<string>();
+                      const dialoguesToShow = rawDialogues.filter((d: any) => {
+                        const key = `${(d.character || "").trim()}::${(d.text || "").trim()}`;
+                        if (!d.text?.trim() || seenDlg.has(key)) return false;
+                        seenDlg.add(key);
+                        return true;
+                      });
                       const sfxToShow = pSfx;
 
                       if (dialoguesToShow.length > 0 || sfxToShow.length > 0) {

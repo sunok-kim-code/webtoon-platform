@@ -132,6 +132,19 @@ export const GEMINI_MODELS: GeminiModelOption[] = [
 ];
 
 
+// ─── 유틸 ───────────────────────────────────────────────────
+
+/** 대사 배열 중복 제거 (character+text 기준) */
+function deduplicateDialogues(dialogues: Array<{ character: string; text: string }>): Array<{ character: string; text: string }> {
+  const seen = new Set<string>();
+  return dialogues.filter(d => {
+    const key = `${(d.character || "").trim()}::${(d.text || "").trim()}`;
+    if (!d.text?.trim() || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 // ─── API 설정 ──────────────────────────────────────────────
 
 const VERTEX_MODEL = "gemini-2.0-flash-001";       // Vertex AI 모델 ID
@@ -921,7 +934,7 @@ export async function analyzeSceneWithGemini(
         notes: p.notes || "",
         panel_type: p.panel_type || "visual",
         sceneId: p.sceneId || "",
-        dialogues: p.dialogues || undefined,
+        dialogues: p.dialogues ? deduplicateDialogues(p.dialogues) : undefined,
         sfx: p.sfx || undefined,
       })),
       sceneOverview: parsed.sceneOverview || "",
