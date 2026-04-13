@@ -351,64 +351,48 @@
               var fillC = sp.fillColor || "#ffffff";
               var strokeC = sp.strokeColor || "#333333";
               var strokeW = sp.strokeWidth || 2.5;
-              try {
-                var vbX = sp.vbX || 0, vbY = sp.vbY || 0;
-                var vbW = sp.vbW || 200, vbH = sp.vbH || 200;
-                var scX = w / vbW, scY = h / vbH;
-                var transformedPath = sp.pathD.replace(
-                  /(-?[0-9]*\.?[0-9]+)\s*,\s*(-?[0-9]*\.?[0-9]+)/g,
-                  function(_m, xStr, yStr) {
-                    var nx = (parseFloat(xStr) - vbX) * scX;
-                    var ny = (parseFloat(yStr) - vbY) * scY;
-                    return nx.toFixed(2) + "," + ny.toFixed(2);
-                  }
-                );
-                var vector = figma.createVector();
-                vector.name = "\uB9D0\uD48D\uC120 \uBC30\uACBD";
-                vector.vectorPaths = [{
-                  windingRule: "NONZERO",
-                  data: transformedPath
-                }];
-                vector.fills = [{ type: "SOLID", color: hexToFigmaColor(fillC) }];
-                if (strokeC && strokeC !== "none" && strokeC !== "transparent") {
-                  vector.strokes = [{ type: "SOLID", color: hexToFigmaColor(strokeC) }];
-                  vector.strokeWeight = strokeW;
-                  vector.strokeJoin = "ROUND";
-                  vector.strokeCap = "ROUND";
-                }
-                vector.resize(w, h);
-                vector.x = 0;
-                vector.y = 0;
-                bg = vector;
-              } catch (e) {
-                console.warn("Vector \uB9D0\uD48D\uC120 \uC0DD\uC131 \uC2E4\uD328, SVG \uB300\uCCB4 \uC2DC\uB3C4:", e);
-                try {
-                  var svgStr = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="' + sp.vbX + " " + sp.vbY + " " + sp.vbW + " " + sp.vbH + '" preserveAspectRatio="none"><path d="' + sp.pathD + '" fill="' + fillC + '" stroke="' + strokeC + '" stroke-width="' + strokeW + '" stroke-linejoin="round"/></svg>';
-                  var svgNode = figma.createNodeFromSvg(svgStr);
-                  svgNode.name = "\uB9D0\uD48D\uC120 \uBC30\uACBD";
-                  for (var ci = 0; ci < svgNode.children.length; ci++) {
-                    var child = svgNode.children[ci];
-                    if ("resize" in child)
-                      child.resize(w, h);
-                  }
-                  svgNode.resize(w, h);
-                  if ("clipsContent" in svgNode)
-                    svgNode.clipsContent = false;
-                  svgNode.x = 0;
-                  svgNode.y = 0;
-                  bg = svgNode;
-                } catch (e2) {
-                  console.warn("SVG \uB9D0\uD48D\uC120\uB3C4 \uC2E4\uD328, \uC0AC\uAC01\uD615\uC73C\uB85C \uB300\uCCB4:", e2);
-                  var fallbackRect = figma.createRectangle();
-                  fallbackRect.name = "\uB9D0\uD48D\uC120 \uBC30\uACBD";
-                  fallbackRect.resize(w, h);
-                  fallbackRect.cornerRadius = Math.min(w, h) * 0.3;
-                  fallbackRect.fills = [{ type: "SOLID", color: hexToFigmaColor(fillC) }];
-                  fallbackRect.strokes = [{ type: "SOLID", color: hexToFigmaColor(strokeC) }];
-                  fallbackRect.strokeWeight = strokeW;
-                  bg = fallbackRect;
-                }
+              var bodyH = h * 0.78;
+              var ellipseBg = figma.createEllipse();
+              ellipseBg.name = "\uB9D0\uD48D\uC120 \uBAB8\uCCB4";
+              ellipseBg.resize(w, bodyH);
+              ellipseBg.x = 0;
+              ellipseBg.y = 0;
+              ellipseBg.fills = [{ type: "SOLID", color: hexToFigmaColor(fillC) }];
+              if (strokeC && strokeC !== "none" && strokeC !== "transparent") {
+                ellipseBg.strokes = [{ type: "SOLID", color: hexToFigmaColor(strokeC) }];
+                ellipseBg.strokeWeight = strokeW;
               }
+              group.appendChild(ellipseBg);
+              var tailVec = figma.createVector();
+              tailVec.name = "\uB9D0\uD48D\uC120 \uAF2C\uB9AC";
+              var isRightTail = sp.pathD.indexOf("104.575") >= 0;
+              var tailW2 = w * 0.18;
+              var tailH2 = h - bodyH + strokeW;
+              var tailCx = isRightTail ? w * 0.65 : w * 0.35;
+              var t1x = tailCx - tailW2 / 2;
+              var t2x = tailCx + tailW2 / 2;
+              var tipX = isRightTail ? w * 0.3 : w * 0.7;
+              var tipY = tailH2;
+              var tailPath = "M 0,0 L " + tailW2.toFixed(1) + ",0 L " + (tipX - t1x).toFixed(1) + "," + tipY.toFixed(1) + " Z";
+              tailVec.vectorPaths = [{ windingRule: "NONZERO", data: tailPath }];
+              tailVec.fills = [{ type: "SOLID", color: hexToFigmaColor(fillC) }];
+              if (strokeC && strokeC !== "none" && strokeC !== "transparent") {
+                tailVec.strokes = [{ type: "SOLID", color: hexToFigmaColor(strokeC) }];
+                tailVec.strokeWeight = strokeW;
+              }
+              tailVec.x = t1x;
+              tailVec.y = bodyH - strokeW;
+              tailVec.resize(tailW2, tailH2);
+              group.appendChild(tailVec);
+              var seamCover = figma.createRectangle();
+              seamCover.name = "\uC774\uC74C\uC0C8";
+              seamCover.fills = [{ type: "SOLID", color: hexToFigmaColor(fillC) }];
+              seamCover.strokes = [];
+              seamCover.resize(tailW2 + strokeW * 2, strokeW * 3);
+              seamCover.x = t1x - strokeW;
+              seamCover.y = bodyH - strokeW * 2;
+              group.appendChild(seamCover);
+              bg = seamCover;
             } else if (style.isEllipse) {
               var ellipse = figma.createEllipse();
               ellipse.name = "\uB9D0\uD48D\uC120 \uBC30\uACBD";
@@ -440,9 +424,10 @@
               bg = rect;
             }
             group.appendChild(bg);
+            var textAreaH = bubble.svgPath && bubble.svgPath.pathD ? h * 0.78 : h;
             text.resize(Math.max(20, w - textPad * 2 * sx), textH);
             text.x = (w - text.width) / 2;
-            text.y = (h - textH) / 2;
+            text.y = (textAreaH - textH) / 2;
             text.textAutoResize = "HEIGHT";
             if (bubble.style.color) {
               text.fills = [{ type: "SOLID", color: hexToFigmaColor(bubble.style.color) }];
