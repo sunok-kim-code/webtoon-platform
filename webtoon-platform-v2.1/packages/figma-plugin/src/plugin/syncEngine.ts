@@ -151,18 +151,25 @@ export class SyncEngine {
 
   /** 여러 페이지 일괄 동기화 */
   async batchSync(pages: PageData[]): Promise<void> {
-    // 이전 내보내기 잔여 프레임 정리 (새 데이터에 없는 pageIndex의 프레임 제거)
+    // 이전 내보내기 잔여 프레임 정리 + 에피소드 레벨 고아 버블 제거
     if (this.episodePage) {
       const newPageIndices = new Set(pages.map(p => p.pageIndex));
       for (const child of Array.from(this.episodePage.children)) {
         const webAppId = child.getPluginData("webAppId");
+        const syncType = child.getPluginData("syncType");
         if (webAppId && webAppId.startsWith("page_")) {
+          // 잔여 페이지 프레임 정리
           const pageIdx = parseInt(webAppId.replace("page_", ""));
           if (!isNaN(pageIdx) && !newPageIndices.has(pageIdx)) {
             console.log("[SyncEngine] 잔여 프레임 제거: " + webAppId);
             child.remove();
             this.mappings.delete(webAppId);
           }
+        } else if (webAppId && syncType && syncType !== "page") {
+          // 에피소드 레벨에 있는 고아 버블/이미지 제거 (페이지 프레임 안에 있어야 함)
+          console.log("[SyncEngine] 고아 노드 제거: " + webAppId + " (type=" + syncType + ")");
+          child.remove();
+          this.mappings.delete(webAppId);
         }
       }
     }
@@ -249,7 +256,13 @@ export class SyncEngine {
       return this.addBubble(bubble);
     }
     // 기존 노드 삭제 후 새로 생성 (모든 스타일 변경 확실히 반영)
-    var frame = existing.parent as FrameNode;
+    // 올바른 페이지 프레임을 찾음 (고아 노드 방지)
+    var parentNode = existing.parent as FrameNode;
+    var frame = parentNode;
+    var correctFrame = this.findExistingNode("page_" + bubble.pageIndex) as FrameNode | null;
+    if (correctFrame) {
+      frame = correctFrame;
+    }
     existing.remove();
     this.mappings.delete(bubble.id);
     var node = await this.factory.createBubbleNode(frame, bubble);
