@@ -1271,14 +1271,24 @@ export function PipelinePage() {
       prompt = artStyle.prefix + prompt;
     }
 
-    // ── 레퍼런스 이미지: 사용자가 직접 선택한 커스텀 레퍼런스만 전달 ──
+    // ── 레퍼런스 이미지: 이전 패널 + 커스텀 레퍼런스 (제외 여부에 따라 포함) ──
     const finalRefUrls: string[] = [];
+
+    // 1. 이전 패널 이미지 (제외되지 않았고 이미지가 있을 때만)
+    if (idx > 0 && !excluded?.has("prev")) {
+      const prevUrl = generatedImages[idx - 1];
+      if (prevUrl && isValidImageUrl(prevUrl)) {
+        finalRefUrls.push(prevUrl);
+      }
+    }
+
+    // 2. 사용자가 직접 선택한 커스텀 레퍼런스
     const customRefs = panelCustomRefs[idx] || [];
     for (const cUrl of customRefs) {
       if (isValidImageUrl(cUrl) && !finalRefUrls.includes(cUrl)) finalRefUrls.push(cUrl);
     }
 
-    console.log(`[Panel ${idx + 1}] 커스텀 레퍼런스 ${finalRefUrls.length}개:`, finalRefUrls.map(u => u.substring(0, 60)));
+    console.log(`[Panel ${idx + 1}] 레퍼런스 ${finalRefUrls.length}개 (이전패널: ${idx > 0 && !excluded?.has("prev") && generatedImages[idx - 1] ? "O" : "X"}):`, finalRefUrls.map(u => u.substring(0, 60)));
 
     // ── 텍스트 렌더링 금지 ──
     prompt += "\nDo NOT render any text, letters, words, sound effects, onomatopoeia, or speech bubbles in the image.";
@@ -1287,7 +1297,7 @@ export function PipelinePage() {
     }
 
     return { prompt, referenceImageUrls: finalRefUrls };
-  }, [editingPanels, panelPrompts, artStyleKey, panelCustomRefs]);
+  }, [editingPanels, panelPrompts, artStyleKey, panelCustomRefs, generatedImages, panelExcludedRefs]);
 
   // ── 단일 패널 이미지 생성 (preparePanelData + Context Chain 연동) ──
   const generatePanelImage = useCallback(async (idx: number) => {
