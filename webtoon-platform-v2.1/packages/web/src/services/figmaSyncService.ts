@@ -295,8 +295,8 @@ export function buildPageDataFromPanels(
       const lineHeight = 32; // fontSize 25 * 1.28 줄간격
       const verticalPadding = 50; // 상하 패딩 합계
       const bh = Math.max(80, lineCount * lineHeight + verticalPadding);
-      // 홀수번째(1st,3rd..) = 오른쪽 꼬리, 짝수번째(2nd,4th..) = 왼쪽 꼬리
-      const tailRight = di % 2 === 0; // di=0 → 1번째(홀수) → 오른쪽
+      // 첫번째(di=0) = 왼쪽 꼬리, 두번째(di=1) = 오른쪽 꼬리, 이후 교대
+      const tailRight = di % 2 === 1; // di=0 → 왼쪽, di=1 → 오른쪽
       const bx = tailRight ? stripWidth * 0.52 : stripWidth * 0.06;
       // 패널 상단에서 시작, 대사별 누적 간격 (높이 + 여백)
       const by = panelY + 20 + bubbleYAccum;
