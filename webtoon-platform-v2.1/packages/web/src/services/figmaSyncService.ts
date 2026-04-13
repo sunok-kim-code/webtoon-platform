@@ -300,8 +300,11 @@ export function buildPageDataFromPanels(
       const isLeft = di % 2 === 0; // di=0 → 왼쪽 배치, di=1 → 오른쪽 배치
       const tailRight = isLeft;    // 왼쪽 배치면 꼬리는 오른쪽, 오른쪽 배치면 꼬리는 왼쪽
       const bx = isLeft ? stripWidth * 0.06 : stripWidth * 0.52;
-      // 패널 상단에서 시작, 대사별 누적 간격 (높이 + 여백)
-      const by = panelY + 20 + bubbleYAccum;
+      // 첫 번째 말풍선: 중간이 패널 상단에 걸리도록 (panelY - bh/2)
+      // 이후 말풍선: 누적 높이로 배치
+      const by = di === 0
+        ? panelY - bh / 2
+        : panelY - bh / 2 + bubbleYAccum;
       bubbleYAccum += bh + 15; // 말풍선 높이 + 간격
 
       bubbles.push({
