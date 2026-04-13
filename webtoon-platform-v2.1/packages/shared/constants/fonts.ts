@@ -34,7 +34,7 @@ export const FONT_LIST_JP: FontEntry[] = [
 ];
 
 /** 전체 폰트 목록 (한국어 + 일본어) */
-export const FONT_LIST: FontEntry[] = [...FONT_LIST_KR, ...FONT_LIST_JP];
+export const FONT_LIST: FontEntry[] = ([] as FontEntry[]).concat(FONT_LIST_KR, FONT_LIST_JP);
 
 /** CSS font-family → Figma 폰트명 변환 (따옴표/fallback 제거) */
 export function cleanFontFamily(cssFont: string): string {

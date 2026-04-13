@@ -95,7 +95,7 @@ export class Exporter {
     // UI (iframe)에서 Firebase Storage에 업로드하고 storageUrl을 다시 받을 수 있도록 구성
     const composedPages: ComposedPage[] = images.map((imageBytes, i) => {
       // Base64 인코딩 (임시 저장용, UI에서 Firebase 업로드 시 사용)
-      const binaryString = String.fromCharCode(...imageBytes);
+      const binaryString = Array.from(imageBytes).map(function(b) { return String.fromCharCode(b); }).join("");
       const base64Data = btoa(binaryString);
 
       // 이미지 높이는 aspect ratio 계산 필요
