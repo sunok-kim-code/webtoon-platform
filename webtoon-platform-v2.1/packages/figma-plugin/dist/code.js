@@ -38,7 +38,6 @@
   var DEFAULT_CONFIG;
   var init_figmaExport = __esm({
     "../shared/types/figmaExport.ts"() {
-      "use strict";
       DEFAULT_CONFIG = {
         pageWidth: 800,
         pageHeight: 1200,
@@ -731,6 +730,7 @@
                 }
               }
             }
+            console.log("[SyncEngine] batchSync v2 \uC2DC\uC791 \u2014 " + pages.length + "\uD398\uC774\uC9C0");
             for (let i = 0; i < pages.length; i++) {
               this.respond({
                 type: "PROGRESS",
@@ -739,6 +739,26 @@
                 label: `\uC5D0\uD53C\uC18C\uB4DC \uB3D9\uAE30\uD654 \uC911 (${i + 1}/${pages.length} \uD398\uC774\uC9C0)`
               });
               yield this.syncPage(pages[i]);
+            }
+            if (this.episodePage) {
+              const pageFrameIds = /* @__PURE__ */ new Set();
+              for (const child of this.episodePage.children) {
+                const webAppId = child.getPluginData("webAppId");
+                if (webAppId && webAppId.startsWith("page_")) {
+                  pageFrameIds.add(child.id);
+                }
+              }
+              let orphanCount = 0;
+              for (const child of Array.from(this.episodePage.children)) {
+                if (!pageFrameIds.has(child.id)) {
+                  console.log("[SyncEngine] \uCD5C\uC885 \uACE0\uC544 \uB178\uB4DC \uC81C\uAC70: " + child.name + " (type=" + child.type + ")");
+                  child.remove();
+                  orphanCount++;
+                }
+              }
+              if (orphanCount > 0) {
+                console.log("[SyncEngine] \uACE0\uC544 \uB178\uB4DC " + orphanCount + "\uAC1C \uC815\uB9AC \uC644\uB8CC");
+              }
             }
             this.respond({ type: "BATCH_OK", count: pages.length });
           });

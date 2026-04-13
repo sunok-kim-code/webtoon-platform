@@ -174,6 +174,8 @@ export class SyncEngine {
       }
     }
 
+    console.log("[SyncEngine] batchSync v2 시작 — " + pages.length + "페이지");
+
     for (let i = 0; i < pages.length; i++) {
       this.respond({
         type: "PROGRESS",
@@ -183,6 +185,30 @@ export class SyncEngine {
       });
       await this.syncPage(pages[i]);
     }
+
+    // ★ 최종 정리: 에피소드 레벨에 페이지 프레임이 아닌 모든 노드 제거
+    // figma.create*() 호출로 인해 루트에 남은 고아 노드들을 정리
+    if (this.episodePage) {
+      const pageFrameIds = new Set<string>();
+      for (const child of this.episodePage.children) {
+        const webAppId = child.getPluginData("webAppId");
+        if (webAppId && webAppId.startsWith("page_")) {
+          pageFrameIds.add(child.id);
+        }
+      }
+      let orphanCount = 0;
+      for (const child of Array.from(this.episodePage.children)) {
+        if (!pageFrameIds.has(child.id)) {
+          console.log("[SyncEngine] 최종 고아 노드 제거: " + child.name + " (type=" + child.type + ")");
+          child.remove();
+          orphanCount++;
+        }
+      }
+      if (orphanCount > 0) {
+        console.log("[SyncEngine] 고아 노드 " + orphanCount + "개 정리 완료");
+      }
+    }
+
     this.respond({ type: "BATCH_OK", count: pages.length });
   }
 
