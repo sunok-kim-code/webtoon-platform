@@ -108,7 +108,7 @@ export class NodeFactory {
   async createDialogue(parent: FrameNode, bubble: BubbleData): Promise<FrameNode> {
     var sx = this.config.scaleFactor;
     var style = bubble.style || {};
-    var textPad = bubble.svgPath ? 25 : 15;  // 텍스트 패딩
+    var textPad = bubble.svgPath ? 30 : 20;  // 텍스트 패딩 (넉넉하게)
 
     // ★ 1단계: 텍스트를 먼저 생성하여 실제 크기 측정
     var fontName = await this.loadFont(

@@ -283,14 +283,24 @@ export function buildPageDataFromPanels(
     // 꼬리 오른쪽 (X좌표 209-x 반전)
     const BUBBLE_PATH_TAIL_RIGHT = "M104.575 1.75781C177.909 1.75781 207.242 60.0132 207.242 131.214C207.242 189.47 187.075 239.095 154.992 256.356C159.575 275.774 173.325 303.823 194.409 318.926C168.742 308.138 152.242 286.562 143.075 269.301C132.075 275.774 119.242 277.932 104.575 277.932C31.242 277.932 1.909 211.046 1.909 131.214C1.909 60.0132 31.242 1.75781 104.575 1.75781Z";
 
+    // 대사별 누적 Y 오프셋 (글자 수에 따라 높이가 달라지므로)
+    let bubbleYAccum = 0;
+
     panelDialogues.forEach((d, di) => {
       const bw = 240;
-      const bh = 80;
+      // 글자 수 기반 높이 계산: 한 줄 약 10자 기준, fontSize 25 + 패딩
+      const charCount = d.text.length;
+      const charsPerLine = 8; // 말풍선 너비 대비 한 줄에 들어가는 글자 수
+      const lineCount = Math.max(1, Math.ceil(charCount / charsPerLine));
+      const lineHeight = 32; // fontSize 25 * 1.28 줄간격
+      const verticalPadding = 50; // 상하 패딩 합계
+      const bh = Math.max(80, lineCount * lineHeight + verticalPadding);
       // 홀수번째(1st,3rd..) = 오른쪽 꼬리, 짝수번째(2nd,4th..) = 왼쪽 꼬리
       const tailRight = di % 2 === 0; // di=0 → 1번째(홀수) → 오른쪽
       const bx = tailRight ? stripWidth * 0.52 : stripWidth * 0.06;
-      // 패널 상단에서 시작, 대사별 간격
-      const by = panelY + 20 + di * 90;
+      // 패널 상단에서 시작, 대사별 누적 간격 (높이 + 여백)
+      const by = panelY + 20 + bubbleYAccum;
+      bubbleYAccum += bh + 15; // 말풍선 높이 + 간격
 
       bubbles.push({
         id: `bubble_${panel.index}_${di}`,
